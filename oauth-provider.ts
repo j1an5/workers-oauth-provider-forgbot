@@ -123,9 +123,9 @@ export interface OAuthHelpers {
   /**
    * Deletes an OAuth client
    * @param clientId - The ID of the client to delete
-   * @returns A Promise resolving to true if successful, false otherwise
+   * @returns A Promise resolving when the deletion is confirmed.
    */
-  deleteClient(clientId: string): Promise<boolean>;
+  deleteClient(clientId: string): Promise<void>;
 
   /**
    * Lists all authorization grants for a specific user with pagination support
@@ -139,9 +139,9 @@ export interface OAuthHelpers {
    * Revokes an authorization grant
    * @param grantId - The ID of the grant to revoke
    * @param userId - The ID of the user who owns the grant
-   * @returns A Promise resolving to true if successful, false otherwise
+   * @returns A Promise resolving when the revocation is confirmed.
    */
-  revokeGrant(grantId: string, userId: string): Promise<boolean>;
+  revokeGrant(grantId: string, userId: string): Promise<void>;
 }
 
 /**
@@ -1010,12 +1010,8 @@ export class OAuthProvider {
    * @returns The client information, or null if not found
    */
   getClient(env: any, clientId: string): Promise<ClientInfo | null> {
-    try {
-      const clientKey = `client:${clientId}`;
-      return env.OAUTH_KV.get(clientKey, { type: 'json' });
-    } catch (error) {
-      return Promise.resolve(null);
-    }
+    const clientKey = `client:${clientId}`;
+    return env.OAUTH_KV.get(clientKey, { type: 'json' });
   }
 }
 
@@ -1338,16 +1334,11 @@ class OAuthHelpersImpl implements OAuthHelpers {
   /**
    * Deletes an OAuth client
    * @param clientId - The ID of the client to delete
-   * @returns A Promise resolving to true if successful, false otherwise
+   * @returns A Promise resolving when the deletion is confirmed.
    */
-  async deleteClient(clientId: string): Promise<boolean> {
-    try {
-      // Delete client
-      await this.env.OAUTH_KV.delete(`client:${clientId}`);
-      return true;
-    } catch (error) {
-      return false;
-    }
+  async deleteClient(clientId: string): Promise<void> {
+    // Delete client
+    await this.env.OAUTH_KV.delete(`client:${clientId}`);
   }
 
   /**
@@ -1395,61 +1386,48 @@ class OAuthHelpersImpl implements OAuthHelpers {
    * Revokes an authorization grant and all its associated access tokens
    * @param grantId - The ID of the grant to revoke
    * @param userId - The ID of the user who owns the grant
-   * @returns A Promise resolving to true if successful, false otherwise
+   * @returns A Promise resolving when the revocation is confirmed.
    */
-  async revokeGrant(grantId: string, userId: string): Promise<boolean> {
-    try {
-      // Construct the full grant key with user ID
-      const grantKey = `grant:${userId}:${grantId}`;
+  async revokeGrant(grantId: string, userId: string): Promise<void> {
+    // Construct the full grant key with user ID
+    const grantKey = `grant:${userId}:${grantId}`;
 
-      // Check if the grant exists before attempting to delete
-      const grantExists = await this.env.OAUTH_KV.get(grantKey);
-      if (!grantExists) {
-        return false;
+    // Delete all access tokens associated with this grant
+    const tokenPrefix = `token:${userId}:${grantId}:`;
+
+    // Handle pagination to ensure we delete all tokens even if there are more than 1000
+    let cursor: string | undefined;
+    let allTokensDeleted = false;
+
+    // Continue fetching and deleting tokens until we've processed all of them
+    while (!allTokensDeleted) {
+      const listOptions: { prefix: string; cursor?: string } = {
+        prefix: tokenPrefix
+      };
+
+      if (cursor) {
+        listOptions.cursor = cursor;
       }
 
-      // Delete all access tokens associated with this grant
-      const tokenPrefix = `token:${userId}:${grantId}:`;
+      const result = await this.env.OAUTH_KV.list(listOptions);
 
-      // Handle pagination to ensure we delete all tokens even if there are more than 1000
-      let cursor: string | undefined;
-      let allTokensDeleted = false;
-
-      // Continue fetching and deleting tokens until we've processed all of them
-      while (!allTokensDeleted) {
-        const listOptions: { prefix: string; cursor?: string } = {
-          prefix: tokenPrefix
-        };
-
-        if (cursor) {
-          listOptions.cursor = cursor;
-        }
-
-        const result = await this.env.OAUTH_KV.list(listOptions);
-
-        // Delete each token in this batch
-        if (result.keys.length > 0) {
-          await Promise.all(result.keys.map((key: { name: string }) => {
-            return this.env.OAUTH_KV.delete(key.name);
-          }));
-        }
-
-        // Check if we need to fetch more tokens
-        if (result.list_complete) {
-          allTokensDeleted = true;
-        } else {
-          cursor = result.cursor;
-        }
+      // Delete each token in this batch
+      if (result.keys.length > 0) {
+        await Promise.all(result.keys.map((key: { name: string }) => {
+          return this.env.OAUTH_KV.delete(key.name);
+        }));
       }
 
-      // After all tokens are deleted, delete the grant itself
-      await this.env.OAUTH_KV.delete(grantKey);
-
-      return true;
-    } catch (error) {
-      console.error('Error revoking grant:', error);
-      return false;
+      // Check if we need to fetch more tokens
+      if (result.list_complete) {
+        allTokensDeleted = true;
+      } else {
+        cursor = result.cursor;
+      }
     }
+
+    // After all tokens are deleted, delete the grant itself
+    await this.env.OAUTH_KV.delete(grantKey);
   }
 }
 
