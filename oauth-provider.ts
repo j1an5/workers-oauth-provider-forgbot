@@ -323,6 +323,12 @@ export interface Grant {
    * The hash of the refresh token associated with this grant
    */
   refreshTokenId?: string;
+
+  /**
+   * The hash of the authorization code associated with this grant
+   * Only present during the authorization code exchange process
+   */
+  authCodeId?: string;
 }
 
 /**
@@ -642,31 +648,42 @@ export class OAuthProvider {
       );
     }
 
-    // Hash the auth code before lookup
-    const codeHash = await hashSecret(code);
-    const codeKey = `auth_code:${codeHash}`;
-    const codeData = await env.OAUTH_KV.get(codeKey, { type: 'json' });
-
-    if (!codeData) {
+    // Parse the authorization code to extract user ID and grant ID
+    const codeParts = code.split(':');
+    if (codeParts.length !== 3) {
       return createErrorResponse(
         'invalid_grant',
-        'Invalid or expired code'
+        'Invalid authorization code format'
       );
     }
 
-    const { grantId, userId } = codeData;
+    const [userId, grantId, _] = codeParts;
 
-    // Delete the code so it can't be used again
-    await env.OAUTH_KV.delete(codeKey);
-
-    // Get the grant using the user ID in the key
+    // Get the grant
     const grantKey = `grant:${userId}:${grantId}`;
     const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
     if (!grantData) {
       return createErrorResponse(
         'invalid_grant',
-        'Grant not found'
+        'Grant not found or authorization code expired'
+      );
+    }
+
+    // Verify that the grant contains an auth code hash
+    if (!grantData.authCodeId) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Authorization code already used'
+      );
+    }
+
+    // Verify the authorization code by comparing its hash to the one in the grant
+    const codeHash = await hashSecret(code);
+    if (codeHash !== grantData.authCodeId) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid authorization code'
       );
     }
 
@@ -678,7 +695,7 @@ export class OAuthProvider {
       );
     }
 
-    // Generate tokens with embedded user and grant IDs for parallel lookups
+    // Code is valid - generate tokens
     const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
     const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
 
@@ -706,10 +723,14 @@ export class OAuthProvider {
       }
     };
 
-    // Store refresh token hash in the grant record
+    // Update the grant:
+    // - Remove the auth code hash (it's single-use)
+    // - Add the refresh token hash
+    // - Make it permanent (no TTL)
+    delete grantData.authCodeId;
     grantData.refreshTokenId = refreshTokenId;
 
-    // Update the grant with the refresh token hash
+    // Update the grant with the refresh token hash and no TTL
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
 
     // Save access token with TTL
@@ -1168,13 +1189,17 @@ class OAuthHelpersImpl implements OAuthHelpers {
    * @returns A Promise resolving to an object containing the redirect URL
    */
   async completeAuthorization(options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }> {
-    // Generate a random authorization code
-    const code = generateRandomString(32);
-
     // Generate a unique grant ID
     const grantId = generateRandomString(16);
 
-    // Store the grant
+    // Generate an authorization code with embedded user and grant IDs
+    const authCodeSecret = generateRandomString(32);
+    const authCode = `${options.userId}:${grantId}:${authCodeSecret}`;
+
+    // Hash the authorization code
+    const authCodeId = await hashSecret(authCode);
+
+    // Store the grant with the auth code hash
     const grant: Grant = {
       id: grantId,
       clientId: options.request.clientId,
@@ -1182,27 +1207,20 @@ class OAuthHelpersImpl implements OAuthHelpers {
       scope: options.scope,
       metadata: options.metadata,
       props: options.props,
-      createdAt: Math.floor(Date.now() / 1000)
+      createdAt: Math.floor(Date.now() / 1000),
+      authCodeId: authCodeId // Store the auth code hash in the grant
     };
 
     // Store the grant with a key that includes the user ID
     const grantKey = `grant:${options.userId}:${grantId}`;
-    await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant));
 
-    // Hash the authorization code before storing
-    const codeHash = await hashSecret(code);
-
-    // Store the authorization code with short TTL (10 minutes)
+    // Set 10-minute TTL for the grant (will be extended when code is exchanged)
     const codeExpiresIn = 600; // 10 minutes
-    // Store user ID with the grant ID so we can reconstruct the full grant key later
-    await this.env.OAUTH_KV.put(`auth_code:${codeHash}`, JSON.stringify({
-      grantId,
-      userId: options.userId
-    }), { expirationTtl: codeExpiresIn });
+    await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant), { expirationTtl: codeExpiresIn });
 
     // Build the redirect URL
     const redirectUrl = new URL(options.request.redirectUri);
-    redirectUrl.searchParams.set('code', code);
+    redirectUrl.searchParams.set('code', authCode);
     if (options.request.state) {
       redirectUrl.searchParams.set('state', options.request.state);
     }

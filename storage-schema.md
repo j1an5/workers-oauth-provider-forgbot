@@ -50,11 +50,31 @@ Client records store OAuth client application information.
 
 ### Authorization Grants
 
-Grant records store information about permissions a user has granted to an application, along with the refresh token for that grant.
+Grant records store information about permissions a user has granted to an application, along with the authorization code (initially) and refresh token (after code exchange).
 
 **Key format:** `grant:{userId}:{grantId}`
 
-**Content Example:**
+**Content Example (during authorization):**
+```json
+{
+  "id": "xyz789",
+  "clientId": "abc123",
+  "userId": "user123",
+  "scope": ["document.read", "document.write"],
+  "metadata": {
+    "label": "My Files Access",
+    "deviceInfo": "Chrome on Windows"
+  },
+  "props": {
+    "userId": 123,
+    "username": "johndoe"
+  },
+  "createdAt": 1644256123,
+  "authCodeId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+}
+```
+
+**Content Example (after code exchange):**
 ```json
 {
   "id": "xyz789",
@@ -74,9 +94,11 @@ Grant records store information about permissions a user has granted to an appli
 }
 ```
 
-**TTL:** No expiration (persistent until revoked)
+**TTL:**
+- Initially 10 minutes (during authorization process)
+- No expiration after the authorization code is exchanged for tokens
 
-> **Note:** The `userId` is included in the key, allowing efficient listing of all grants for a user using KV's `list()` function with a prefix. The `refreshTokenId` is the hash of the refresh token, which is stored directly in the grant record.
+> **Note:** The grant record includes the hash of the authorization code initially, which is replaced by the hash of the refresh token after the code is exchanged. The record also has a TTL during the authorization process, which is removed when the code is exchanged for tokens to make the grant permanent.
 
 ### Authorization Codes
 
@@ -156,21 +178,29 @@ Token records store metadata about issued access tokens, including denormalized 
 ## Example Workflow
 
 1. A client is registered, creating a `client:{clientId}` entry with a hashed client secret.
-2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry (without a refresh token initially).
-3. An authorization code is issued, a hash of the code is calculated, and a temporary `auth_code:{codeHash}` entry is created containing both the grant ID and user ID.
-4. The client exchanges the code for tokens:
-   - The code is hashed and looked up
-   - After verification, the `auth_code:{codeHash}` entry is deleted
-   - A new refresh token is generated and its hash is stored in the grant record
-   - A new access token is generated and its hash is stored as `token:{userId}:{grantId}:{accessTokenId}` with denormalized grant data
+
+2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry that includes:
+   - The hashed authorization code in the `authCodeId` field
+   - A 10-minute TTL on the grant record
+
+3. The client exchanges the authorization code for tokens:
+   - The code is validated by comparing its hash to the one stored in the grant
+   - The `authCodeId` is removed from the grant
+   - A refresh token is generated and its hash is stored in the grant's `refreshTokenId` field
+   - The grant's TTL is removed, making it permanent
+   - A new access token is generated and stored as `token:{userId}:{grantId}:{accessTokenId}` with denormalized grant data
    - Both tokens are returned to the client
-5. When the client makes API requests with the access token:
+
+4. When the client makes API requests with the access token:
    - The system looks up the token directly using the structured key format
    - Grant information is already available in the token record, eliminating need for a separate lookup
    - The API handler is called with the grant props from the token record
-6. Access tokens expire automatically after their TTL.
-7. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
-8. When a grant is revoked:
+
+5. Access tokens expire automatically after their TTL.
+
+6. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
+
+7. When a grant is revoked:
    - All associated access tokens are found using the key prefix `token:{userId}:{grantId}:` and deleted
    - The grant record is deleted, which also effectively revokes the refresh token
 
