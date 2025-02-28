@@ -13,11 +13,9 @@ All keys in the KV namespace follow a consistent pattern to make them easily ide
 | Prefix | Purpose | Example |
 |--------|---------|---------|
 | `client:` | Client registration data | `client:abc123` |
-| `grant:` | Authorization grant data | `grant:xyz789` |
+| `grant:{userId}:` | Authorization grant data | `grant:user123:xyz789` |
 | `auth_code:` | Authorization codes | `auth_code:def456` |
 | `token:` | Access and refresh tokens | `token:ghi789` |
-| `user_grants:` | List of grants for a user | `user_grants:user123` |
-| `clients_list` | List of all client IDs | `clients_list` |
 
 ## Data Structures
 
@@ -54,7 +52,7 @@ Client records store OAuth client application information.
 
 Grant records store information about permissions a user has granted to an application.
 
-**Key format:** `grant:{grantId}`
+**Key format:** `grant:{userId}:{grantId}`
 
 **Content Example:**
 ```json
@@ -77,15 +75,23 @@ Grant records store information about permissions a user has granted to an appli
 
 **TTL:** No expiration (persistent until revoked)
 
+> **Note:** The `userId` is included in the key, allowing efficient listing of all grants for a user using KV's `list()` function with a prefix.
+
 ### Authorization Codes
 
 Authorization codes are short-lived credentials issued during the authorization flow.
 
 **Key format:** `auth_code:{codeHash}`
 
-**Content:** The grant ID associated with this authorization code (string value)
+**Content Example:**
+```json
+{
+  "grantId": "xyz789",
+  "userId": "user123"
+}
+```
 
-> **Note:** The authorization code is hashed using SHA-256 before being used as part of the key. Only the hash of the code is stored, not the code itself.
+> **Note:** The authorization code is hashed using SHA-256 before being used as part of the key. Only the hash of the code is stored, not the code itself. The content includes both the grant ID and user ID to reconstruct the full grant key later.
 
 **TTL:** 10 minutes (600 seconds)
 
@@ -100,54 +106,20 @@ Token records store metadata about issued access and refresh tokens.
 {
   "id": "ghi789",
   "grantId": "xyz789",
+  "userId": "user123",
   "type": "access",
   "createdAt": 1644256123,
   "expiresAt": 1644259723
 }
 ```
 
+> **Note:** The `userId` is included in the token data to allow reconstructing the full grant key.
+
 **TTL:**
 - Access tokens: Typically 1 hour (3600 seconds) by default
 - Refresh tokens: Typically 30 days (2592000 seconds) by default
 
 > **Important:** The actual token strings are never stored in the KV storage. Only the token IDs (SHA-256 hashes of the token strings) are stored.
-
-### User Grants List
-
-A list of all grant IDs associated with a specific user.
-
-**Key format:** `user_grants:{userId}`
-
-**Content Example:**
-```json
-["xyz789", "mno456", "pqr789"]
-```
-
-**TTL:** No expiration (persistent)
-
-### Clients List
-
-A list of all client IDs registered in the system.
-
-**Key format:** `clients_list`
-
-**Content Example:**
-```json
-["abc123", "def456", "ghi789"]
-```
-
-**TTL:** No expiration (persistent)
-
-## Relationships
-
-The following diagram illustrates the relationships between the different data entities:
-
-```
-User (userId) 1:N Grants (grantId)
-Grant (grantId) 1:N Tokens (tokenId)
-Client (clientId) 1:N Grants (grantId)
-AuthCode -> Grant (1:1 temporary relationship)
-```
 
 ## Security Considerations
 
@@ -162,15 +134,17 @@ AuthCode -> Grant (1:1 temporary relationship)
 
 3. **Cryptographic Hash Verification**: When validating client credentials or authorization codes, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
 
+4. **Efficient Key Design**: The key design leverages KV's list capabilities to efficiently query related data without maintaining separate indexes or lists.
+
 ## Example Workflow
 
-1. A client is registered, creating a `client:{clientId}` entry with a hashed client secret and updating `clients_list`.
-2. A user authorizes the client, creating a `grant:{grantId}` entry and updating `user_grants:{userId}`.
-3. An authorization code is issued, a hash of the code is calculated, and a temporary `auth_code:{codeHash}` entry is created pointing to the grant.
+1. A client is registered, creating a `client:{clientId}` entry with a hashed client secret.
+2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry.
+3. An authorization code is issued, a hash of the code is calculated, and a temporary `auth_code:{codeHash}` entry is created containing both the grant ID and user ID.
 4. The client exchanges the code for tokens:
    - The code is hashed and looked up
    - After verification, the `auth_code:{codeHash}` entry is deleted
-   - New tokens are generated and their hashes are stored as `token:{accessTokenId}` and `token:{refreshTokenId}` entries
+   - New tokens are generated and their hashes are stored as `token:{accessTokenId}` and `token:{refreshTokenId}` entries, including the user ID in the token data
 5. Access tokens expire automatically after their TTL.
 6. Refresh tokens can be used to obtain new access tokens until they expire.
 
@@ -178,4 +152,5 @@ AuthCode -> Grant (1:1 temporary relationship)
 
 - For high-traffic applications, consider using a caching layer in front of KV to reduce read operations on frequently accessed data.
 - Monitor KV usage metrics to ensure you stay within Cloudflare's limits for your plan.
+- The design uses KV's `list()` capability with key prefixes to efficiently query related data like all grants for a user, eliminating the need for separate list indexes.
 - If a grant is revoked, associated tokens are not immediately deleted from KV, but rely on TTL expiration. Add a cleanup process if immediate revocation is required.

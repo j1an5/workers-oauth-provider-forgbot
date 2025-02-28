@@ -142,9 +142,10 @@ export interface OAuthHelpers {
   /**
    * Revokes an authorization grant
    * @param grantId - The ID of the grant to revoke
+   * @param userId - The ID of the user who owns the grant
    * @returns A Promise resolving to true if successful, false otherwise
    */
-  revokeGrant(grantId: string): Promise<boolean>;
+  revokeGrant(grantId: string, userId: string): Promise<boolean>;
 }
 
 /**
@@ -336,6 +337,11 @@ export interface Token {
    * Identifier of the grant this token is associated with
    */
   grantId: string;
+
+  /**
+   * User ID associated with this token (needed to reconstruct the grant key)
+   */
+  userId: string;
 
   /**
    * Type of token (access or refresh)
@@ -654,17 +660,19 @@ export class OAuthProvider {
       // Hash the auth code before lookup
       const codeHash = await hashSecret(code);
       const codeKey = `auth_code:${codeHash}`;
-      const grantId = await env.OAUTH_KV.get(codeKey);
+      const codeData = await env.OAUTH_KV.get(codeKey, { type: 'json' });
 
-      if (!grantId) {
+      if (!codeData) {
         throw new Error('Invalid or expired code');
       }
+
+      const { grantId, userId } = codeData;
 
       // Delete the code so it can't be used again
       await env.OAUTH_KV.delete(codeKey);
 
-      // Get the grant
-      const grantKey = `grant:${grantId}`;
+      // Get the grant using the user ID in the key
+      const grantKey = `grant:${userId}:${grantId}`;
       const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
       if (!grantData) {
@@ -692,6 +700,7 @@ export class OAuthProvider {
       const accessTokenData: Token = {
         id: accessTokenId,
         grantId: grantId,
+        userId: userId, // Include userId in token data
         type: 'access',
         createdAt: now,
         expiresAt: accessTokenExpiresAt
@@ -701,6 +710,7 @@ export class OAuthProvider {
       const refreshTokenData: Token = {
         id: refreshTokenId,
         grantId: grantId,
+        userId: userId, // Include userId in token data
         type: 'refresh',
         createdAt: now,
         expiresAt: refreshTokenExpiresAt
@@ -775,8 +785,8 @@ export class OAuthProvider {
         throw new Error('Invalid refresh token');
       }
 
-      // Get the associated grant
-      const grantKey = `grant:${tokenData.grantId}`;
+      // Get the associated grant using userId in the key
+      const grantKey = `grant:${tokenData.userId}:${tokenData.grantId}`;
       const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
       if (!grantData) {
@@ -799,6 +809,7 @@ export class OAuthProvider {
       const accessTokenData: Token = {
         id: accessTokenId,
         grantId: tokenData.grantId,
+        userId: tokenData.userId, // Include the user ID
         type: 'access',
         createdAt: now,
         expiresAt: accessTokenExpiresAt
@@ -974,8 +985,8 @@ export class OAuthProvider {
         throw new Error('Access token expired');
       }
 
-      // Get the associated grant
-      const grantKey = `grant:${tokenData.grantId}`;
+      // Get the associated grant using the user ID
+      const grantKey = `grant:${tokenData.userId}:${tokenData.grantId}`;
       const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
       if (!grantData) {
@@ -1082,18 +1093,20 @@ export class OAuthProvider {
           createdAt: Math.floor(Date.now() / 1000)
         };
 
-        // Store the grant with long TTL (or no expiry)
-        await env.OAUTH_KV.put(`grant:${grantId}`, JSON.stringify(grant));
-
-        // Also store in user's grants list
-        await this.updateUserGrantsList(env, options.userId, grantId);
+        // Store the grant with a key that includes the user ID
+        const grantKey = `grant:${options.userId}:${grantId}`;
+        await env.OAUTH_KV.put(grantKey, JSON.stringify(grant));
 
         // Hash the authorization code before storing
         const codeHash = await hashSecret(code);
 
         // Store the authorization code with short TTL (10 minutes)
         const codeExpiresIn = 600; // 10 minutes
-        await env.OAUTH_KV.put(`auth_code:${codeHash}`, grantId, { expirationTtl: codeExpiresIn });
+        // Store user ID with the grant ID so we can reconstruct the full grant key later
+        await env.OAUTH_KV.put(`auth_code:${codeHash}`, JSON.stringify({
+          grantId,
+          userId: options.userId
+        }), { expirationTtl: codeExpiresIn });
 
         // Build the redirect URL
         const redirectUrl = new URL(options.request.redirectUri);
@@ -1228,45 +1241,41 @@ export class OAuthProvider {
        * @returns A Promise resolving to an array of grant information
        */
       listUserGrants: async (userId: string): Promise<Grant[]> => {
-        const userGrantsKey = `user_grants:${userId}`;
-        const grantIds = await env.OAUTH_KV.get(userGrantsKey, { type: 'json' }) || [];
+        // Use the KV list() function to get all grant keys with the user ID prefix
+        const { keys } = await env.OAUTH_KV.list({ prefix: `grant:${userId}:` });
 
+        // Fetch all grants in parallel
         const grants: Grant[] = [];
-        for (const grantId of grantIds) {
-          const grantKey = `grant:${grantId}`;
-          const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+        const promises = keys.map(async (key: { name: string }) => {
+          const grantData = await env.OAUTH_KV.get(key.name, { type: 'json' });
           if (grantData) {
             grants.push(grantData);
           }
-        }
+        });
 
+        await Promise.all(promises);
         return grants;
       },
 
       /**
        * Revokes an authorization grant
        * @param grantId - The ID of the grant to revoke
+       * @param userId - The ID of the user who owns the grant
        * @returns A Promise resolving to true if successful, false otherwise
        */
-      revokeGrant: async (grantId: string): Promise<boolean> => {
+      revokeGrant: async (grantId: string, userId: string): Promise<boolean> => {
         try {
-          // Get grant to find user ID
-          const grantKey = `grant:${grantId}`;
-          const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+          // Construct the full grant key with user ID
+          const grantKey = `grant:${userId}:${grantId}`;
 
-          if (!grantData) {
+          // Check if the grant exists before attempting to delete
+          const grantExists = await env.OAUTH_KV.get(grantKey);
+          if (!grantExists) {
             return false;
           }
 
           // Delete grant
           await env.OAUTH_KV.delete(grantKey);
-
-          // Update user's grants list
-          const userId = grantData.userId;
-          const userGrantsKey = `user_grants:${userId}`;
-          const userGrants = await env.OAUTH_KV.get(userGrantsKey, { type: 'json' }) || [];
-          const updatedGrants = userGrants.filter((id: string) => id !== grantId);
-          await env.OAUTH_KV.put(userGrantsKey, JSON.stringify(updatedGrants));
 
           // Note: We don't need to delete tokens as they'll expire via TTL
 
@@ -1278,26 +1287,6 @@ export class OAuthProvider {
     };
   }
 
-  /**
-   * Updates the list of grant IDs for a user in KV storage
-   * @param env - Cloudflare Worker environment variables
-   * @param userId - The user ID to update grants for
-   * @param grantId - The grant ID to add to the user's list
-   */
-  private async updateUserGrantsList(env: any, userId: string, grantId: string): Promise<void> {
-    try {
-      const userGrantsKey = `user_grants:${userId}`;
-      const userGrants = await env.OAUTH_KV.get(userGrantsKey, { type: 'json' }) || [];
-
-      if (!userGrants.includes(grantId)) {
-        userGrants.push(grantId);
-        await env.OAUTH_KV.put(userGrantsKey, JSON.stringify(userGrants));
-      }
-    } catch (error) {
-      // If this fails, it's not critical
-      console.error('Failed to update user grants list:', error);
-    }
-  }
 }
 
 /**
