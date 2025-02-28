@@ -531,13 +531,11 @@ export class OAuthProvider {
   private async handleTokenRequest(request: Request, env: any): Promise<Response> {
     // Only accept POST requests
     if (request.method !== 'POST') {
-      return new Response(JSON.stringify({
-        error: 'invalid_request',
-        error_description: 'Method not allowed'
-      }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_request',
+        'Method not allowed',
+        405
+      );
     }
 
     let contentType = request.headers.get('Content-Type') || '';
@@ -571,37 +569,31 @@ export class OAuthProvider {
     }
 
     if (!clientId || !clientSecret) {
-      return new Response(JSON.stringify({
-        error: 'invalid_client',
-        error_description: 'Client authentication failed'
-      }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_client',
+        'Client authentication failed',
+        401
+      );
     }
 
     // Verify client
     const clientInfo = await this.getClient(env, clientId);
     if (!clientInfo) {
-      return new Response(JSON.stringify({
-        error: 'invalid_client',
-        error_description: 'Client not found'
-      }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_client',
+        'Client not found',
+        401
+      );
     }
 
     // Hash the provided secret and compare with stored hash
     const providedSecretHash = await hashSecret(clientSecret);
     if (providedSecretHash !== clientInfo.clientSecret) {
-      return new Response(JSON.stringify({
-        error: 'invalid_client',
-        error_description: 'Client authentication failed'
-      }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_client',
+        'Client authentication failed',
+        401
+      );
     }
 
     // Handle different grant types
@@ -612,13 +604,10 @@ export class OAuthProvider {
     } else if (grantType === 'refresh_token') {
       return this.handleRefreshTokenGrant(body, clientInfo, env);
     } else {
-      return new Response(JSON.stringify({
-        error: 'unsupported_grant_type',
-        error_description: 'Grant type not supported'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'unsupported_grant_type',
+        'Grant type not supported'
+      );
     }
   }
 
@@ -639,115 +628,107 @@ export class OAuthProvider {
     const redirectUri = body.redirect_uri;
 
     if (!code) {
-      return new Response(JSON.stringify({
-        error: 'invalid_request',
-        error_description: 'Authorization code is required'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_request',
+        'Authorization code is required'
+      );
     }
 
     // Verify redirect URI is in the allowed list
     if (redirectUri && !clientInfo.redirectUris.includes(redirectUri)) {
-      return new Response(JSON.stringify({
-        error: 'invalid_grant',
-        error_description: 'Invalid redirect URI'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Verify the code and get the grant
-    try {
-      // Hash the auth code before lookup
-      const codeHash = await hashSecret(code);
-      const codeKey = `auth_code:${codeHash}`;
-      const codeData = await env.OAUTH_KV.get(codeKey, { type: 'json' });
-
-      if (!codeData) {
-        throw new Error('Invalid or expired code');
-      }
-
-      const { grantId, userId } = codeData;
-
-      // Delete the code so it can't be used again
-      await env.OAUTH_KV.delete(codeKey);
-
-      // Get the grant using the user ID in the key
-      const grantKey = `grant:${userId}:${grantId}`;
-      const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
-
-      if (!grantData) {
-        throw new Error('Grant not found');
-      }
-
-      // Verify client ID matches
-      if (grantData.clientId !== clientInfo.clientId) {
-        throw new Error('Client ID mismatch');
-      }
-
-      // Generate tokens with embedded user and grant IDs for parallel lookups
-      const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
-      const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
-
-      const accessToken = `${userId}:${grantId}:${accessTokenSecret}`;
-      const refreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
-
-      // Use WebCrypto to generate token IDs from the full token strings
-      const accessTokenId = await generateTokenId(accessToken);
-      const refreshTokenId = await generateTokenId(refreshToken);
-
-      const now = Math.floor(Date.now() / 1000);
-      const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
-
-      // Store access token with denormalized grant information
-      const accessTokenData: Token = {
-        id: accessTokenId,
-        grantId: grantId,
-        userId: userId,
-        createdAt: now,
-        expiresAt: accessTokenExpiresAt,
-        grant: {
-          clientId: grantData.clientId,
-          scope: grantData.scope,
-          props: grantData.props
-        }
-      };
-
-      // Store refresh token hash in the grant record
-      grantData.refreshTokenId = refreshTokenId;
-
-      // Update the grant with the refresh token hash
-      await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
-
-      // Save access token with TTL
-      await env.OAUTH_KV.put(
-        `token:${userId}:${grantId}:${accessTokenId}`,
-        JSON.stringify(accessTokenData),
-        { expirationTtl: this.options.accessTokenTTL }
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid redirect URI'
       );
-
-      // Return the tokens
-      return new Response(JSON.stringify({
-        access_token: accessToken,
-        token_type: 'bearer',
-        expires_in: this.options.accessTokenTTL,
-        refresh_token: refreshToken,
-        scope: grantData.scope.join(' ')
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'invalid_grant',
-        error_description: error instanceof Error ? error.message : 'Invalid authorization code'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
     }
+
+    // Hash the auth code before lookup
+    const codeHash = await hashSecret(code);
+    const codeKey = `auth_code:${codeHash}`;
+    const codeData = await env.OAUTH_KV.get(codeKey, { type: 'json' });
+
+    if (!codeData) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid or expired code'
+      );
+    }
+
+    const { grantId, userId } = codeData;
+
+    // Delete the code so it can't be used again
+    await env.OAUTH_KV.delete(codeKey);
+
+    // Get the grant using the user ID in the key
+    const grantKey = `grant:${userId}:${grantId}`;
+    const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+
+    if (!grantData) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Grant not found'
+      );
+    }
+
+    // Verify client ID matches
+    if (grantData.clientId !== clientInfo.clientId) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Client ID mismatch'
+      );
+    }
+
+    // Generate tokens with embedded user and grant IDs for parallel lookups
+    const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
+    const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
+
+    const accessToken = `${userId}:${grantId}:${accessTokenSecret}`;
+    const refreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
+
+    // Use WebCrypto to generate token IDs from the full token strings
+    const accessTokenId = await generateTokenId(accessToken);
+    const refreshTokenId = await generateTokenId(refreshToken);
+
+    const now = Math.floor(Date.now() / 1000);
+    const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
+
+    // Store access token with denormalized grant information
+    const accessTokenData: Token = {
+      id: accessTokenId,
+      grantId: grantId,
+      userId: userId,
+      createdAt: now,
+      expiresAt: accessTokenExpiresAt,
+      grant: {
+        clientId: grantData.clientId,
+        scope: grantData.scope,
+        props: grantData.props
+      }
+    };
+
+    // Store refresh token hash in the grant record
+    grantData.refreshTokenId = refreshTokenId;
+
+    // Update the grant with the refresh token hash
+    await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
+
+    // Save access token with TTL
+    await env.OAUTH_KV.put(
+      `token:${userId}:${grantId}:${accessTokenId}`,
+      JSON.stringify(accessTokenData),
+      { expirationTtl: this.options.accessTokenTTL }
+    );
+
+    // Return the tokens
+    return new Response(JSON.stringify({
+      access_token: accessToken,
+      token_type: 'bearer',
+      expires_in: this.options.accessTokenTTL,
+      refresh_token: refreshToken,
+      scope: grantData.scope.join(' ')
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   /**
@@ -766,91 +747,90 @@ export class OAuthProvider {
     const refreshToken = body.refresh_token;
 
     if (!refreshToken) {
-      return new Response(JSON.stringify({
-        error: 'invalid_request',
-        error_description: 'Refresh token is required'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    try {
-      // Parse the token to extract user ID and grant ID
-      const tokenParts = refreshToken.split(':');
-      if (tokenParts.length !== 3) {
-        throw new Error('Invalid token format');
-      }
-
-      const [userId, grantId, _] = tokenParts;
-
-      // Calculate the token hash
-      const refreshTokenId = await generateTokenId(refreshToken);
-
-      // Get the associated grant using userId in the key
-      const grantKey = `grant:${userId}:${grantId}`;
-      const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
-
-      if (!grantData) {
-        throw new Error('Grant not found');
-      }
-
-      // Verify refresh token matches the one stored in the grant
-      if (grantData.refreshTokenId !== refreshTokenId) {
-        throw new Error('Invalid refresh token');
-      }
-
-      // Verify client ID matches
-      if (grantData.clientId !== clientInfo.clientId) {
-        throw new Error('Client ID mismatch');
-      }
-
-      // Generate new access token with embedded user and grant IDs
-      const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
-      const newAccessToken = `${userId}:${grantId}:${accessTokenSecret}`;
-      const accessTokenId = await generateTokenId(newAccessToken);
-
-      const now = Math.floor(Date.now() / 1000);
-      const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
-
-      // Store new access token with denormalized grant information
-      const accessTokenData: Token = {
-        id: accessTokenId,
-        grantId: grantId,
-        userId: userId,
-        createdAt: now,
-        expiresAt: accessTokenExpiresAt,
-        grant: {
-          clientId: grantData.clientId,
-          scope: grantData.scope,
-          props: grantData.props
-        }
-      };
-
-      await env.OAUTH_KV.put(
-        `token:${userId}:${grantId}:${accessTokenId}`,
-        JSON.stringify(accessTokenData),
-        { expirationTtl: this.options.accessTokenTTL }
+      return createErrorResponse(
+        'invalid_request',
+        'Refresh token is required'
       );
-
-      // Return the new access token
-      return new Response(JSON.stringify({
-        access_token: newAccessToken,
-        token_type: 'bearer',
-        expires_in: this.options.accessTokenTTL,
-        scope: grantData.scope.join(' ')
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'invalid_grant',
-        error_description: error instanceof Error ? error.message : 'Invalid refresh token'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
     }
+
+    // Parse the token to extract user ID and grant ID
+    const tokenParts = refreshToken.split(':');
+    if (tokenParts.length !== 3) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid token format'
+      );
+    }
+
+    const [userId, grantId, _] = tokenParts;
+
+    // Calculate the token hash
+    const refreshTokenId = await generateTokenId(refreshToken);
+
+    // Get the associated grant using userId in the key
+    const grantKey = `grant:${userId}:${grantId}`;
+    const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+
+    if (!grantData) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Grant not found'
+      );
+    }
+
+    // Verify refresh token matches the one stored in the grant
+    if (grantData.refreshTokenId !== refreshTokenId) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid refresh token'
+      );
+    }
+
+    // Verify client ID matches
+    if (grantData.clientId !== clientInfo.clientId) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Client ID mismatch'
+      );
+    }
+
+    // Generate new access token with embedded user and grant IDs
+    const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
+    const newAccessToken = `${userId}:${grantId}:${accessTokenSecret}`;
+    const accessTokenId = await generateTokenId(newAccessToken);
+
+    const now = Math.floor(Date.now() / 1000);
+    const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
+
+    // Store new access token with denormalized grant information
+    const accessTokenData: Token = {
+      id: accessTokenId,
+      grantId: grantId,
+      userId: userId,
+      createdAt: now,
+      expiresAt: accessTokenExpiresAt,
+      grant: {
+        clientId: grantData.clientId,
+        scope: grantData.scope,
+        props: grantData.props
+      }
+    };
+
+    await env.OAUTH_KV.put(
+      `token:${userId}:${grantId}:${accessTokenId}`,
+      JSON.stringify(accessTokenData),
+      { expirationTtl: this.options.accessTokenTTL }
+    );
+
+    // Return the new access token
+    return new Response(JSON.stringify({
+      access_token: newAccessToken,
+      token_type: 'bearer',
+      expires_in: this.options.accessTokenTTL,
+      scope: grantData.scope.join(' ')
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   /**
@@ -861,98 +841,81 @@ export class OAuthProvider {
    */
   private async handleClientRegistration(request: Request, env: any): Promise<Response> {
     if (!this.options.clientRegistrationEndpoint) {
-      return new Response(JSON.stringify({
-        error: 'not_implemented',
-        error_description: 'Client registration is not enabled'
-      }), {
-        status: 501,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'not_implemented',
+        'Client registration is not enabled',
+        501
+      );
     }
 
     // Check method
     if (request.method !== 'POST') {
-      return new Response(JSON.stringify({
-        error: 'invalid_request',
-        error_description: 'Method not allowed'
-      }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return createErrorResponse(
+        'invalid_request',
+        'Method not allowed',
+        405
+      );
     }
 
-    try {
-      // Parse client metadata
-      const clientMetadata = await request.json();
+    // Parse client metadata
+    const clientMetadata = await request.json();
 
-      // Validate redirect URIs
-      if (!clientMetadata.redirect_uris || !Array.isArray(clientMetadata.redirect_uris) || clientMetadata.redirect_uris.length === 0) {
-        return new Response(JSON.stringify({
-          error: 'invalid_redirect_uri',
-          error_description: 'At least one redirect URI is required'
-        }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' }
-        });
-      }
-
-      // Create client
-      const clientId = generateRandomString(16);
-      const clientSecret = generateRandomString(32);
-
-      // Hash the client secret before storing
-      const hashedSecret = await hashSecret(clientSecret);
-
-      const clientInfo: ClientInfo = {
-        clientId,
-        clientSecret: hashedSecret, // Store the hashed secret
-        redirectUris: clientMetadata.redirect_uris,
-        clientName: clientMetadata.client_name,
-        logoUri: clientMetadata.logo_uri,
-        clientUri: clientMetadata.client_uri,
-        policyUri: clientMetadata.policy_uri,
-        tosUri: clientMetadata.tos_uri,
-        jwksUri: clientMetadata.jwks_uri,
-        contacts: clientMetadata.contacts,
-        grantTypes: clientMetadata.grant_types || ['authorization_code', 'refresh_token'],
-        responseTypes: clientMetadata.response_types || ['code'],
-        registrationDate: Math.floor(Date.now() / 1000)
-      };
-
-      // Store client info
-      await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientInfo));
-
-      // Return client information with the original unhashed secret
-      const response = {
-        client_id: clientInfo.clientId,
-        client_secret: clientSecret, // Return the original unhashed secret
-        redirect_uris: clientInfo.redirectUris,
-        client_name: clientInfo.clientName,
-        logo_uri: clientInfo.logoUri,
-        client_uri: clientInfo.clientUri,
-        policy_uri: clientInfo.policyUri,
-        tos_uri: clientInfo.tosUri,
-        jwks_uri: clientInfo.jwksUri,
-        contacts: clientInfo.contacts,
-        grant_types: clientInfo.grantTypes,
-        response_types: clientInfo.responseTypes,
-        registration_client_uri: `${this.options.clientRegistrationEndpoint}/${clientId}`,
-        client_id_issued_at: clientInfo.registrationDate,
-      };
-
-      return new Response(JSON.stringify(response), {
-        status: 201,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'invalid_request',
-        error_description: 'Invalid client metadata'
-      }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
+    // Validate redirect URIs
+    if (!clientMetadata.redirect_uris || !Array.isArray(clientMetadata.redirect_uris) || clientMetadata.redirect_uris.length === 0) {
+      return createErrorResponse(
+        'invalid_redirect_uri',
+        'At least one redirect URI is required'
+      );
     }
+
+    // Create client
+    const clientId = generateRandomString(16);
+    const clientSecret = generateRandomString(32);
+
+    // Hash the client secret before storing
+    const hashedSecret = await hashSecret(clientSecret);
+
+    const clientInfo: ClientInfo = {
+      clientId,
+      clientSecret: hashedSecret, // Store the hashed secret
+      redirectUris: clientMetadata.redirect_uris,
+      clientName: clientMetadata.client_name,
+      logoUri: clientMetadata.logo_uri,
+      clientUri: clientMetadata.client_uri,
+      policyUri: clientMetadata.policy_uri,
+      tosUri: clientMetadata.tos_uri,
+      jwksUri: clientMetadata.jwks_uri,
+      contacts: clientMetadata.contacts,
+      grantTypes: clientMetadata.grant_types || ['authorization_code', 'refresh_token'],
+      responseTypes: clientMetadata.response_types || ['code'],
+      registrationDate: Math.floor(Date.now() / 1000)
+    };
+
+    // Store client info
+    await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientInfo));
+
+    // Return client information with the original unhashed secret
+    const response = {
+      client_id: clientInfo.clientId,
+      client_secret: clientSecret, // Return the original unhashed secret
+      redirect_uris: clientInfo.redirectUris,
+      client_name: clientInfo.clientName,
+      logo_uri: clientInfo.logoUri,
+      client_uri: clientInfo.clientUri,
+      policy_uri: clientInfo.policyUri,
+      tos_uri: clientInfo.tosUri,
+      jwks_uri: clientInfo.jwksUri,
+      contacts: clientInfo.contacts,
+      grant_types: clientInfo.grantTypes,
+      response_types: clientInfo.responseTypes,
+      registration_client_uri: `${this.options.clientRegistrationEndpoint}/${clientId}`,
+      client_id_issued_at: clientInfo.registrationDate,
+    };
+
+    return new Response(JSON.stringify(response), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 
   /**
@@ -967,80 +930,69 @@ export class OAuthProvider {
     const authHeader = request.headers.get('Authorization');
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({
-        error: 'invalid_token',
-        error_description: 'Missing or invalid access token'
-      }), {
-        status: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token", error_description="Missing or invalid access token"'
-        }
-      });
+      return createErrorResponse(
+        'invalid_token',
+        'Missing or invalid access token',
+        401,
+        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token", error_description="Missing or invalid access token"' }
+      );
     }
 
     const accessToken = authHeader.substring(7);
 
-    try {
-      // Parse the token to extract user ID and grant ID for parallel lookups
-      const tokenParts = accessToken.split(':');
-      if (tokenParts.length !== 3) {
-        throw new Error('Invalid token format');
-      }
-
-      const [userId, grantId, _] = tokenParts;
-
-      // Generate token ID from the full token
-      const accessTokenId = await generateTokenId(accessToken);
-
-      // Look up the token record, which now contains the denormalized grant information
-      const tokenKey = `token:${userId}:${grantId}:${accessTokenId}`;
-      const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
-
-      // Verify token
-      if (!tokenData) {
-        throw new Error('Invalid access token');
-      }
-
-      // Check if token is expired (should be auto-deleted by KV TTL, but double-check)
-      const now = Math.floor(Date.now() / 1000);
-      if (tokenData.expiresAt < now) {
-        throw new Error('Access token expired');
-      }
-
-      // Extract the denormalized grant data directly from the token
-      const grantProps = tokenData.grant.props;
-
-      // Call the API handler with the grant props from the token
-      return this.options.apiHandler(
-        request,
-        env,
-        ctx,
-        this.createOAuthHelpers(env),
-        grantProps
+    // Parse the token to extract user ID and grant ID for parallel lookups
+    const tokenParts = accessToken.split(':');
+    if (tokenParts.length !== 3) {
+      return createErrorResponse(
+        'invalid_token',
+        'Invalid token format',
+        401,
+        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
       );
-
-      return this.options.apiHandler(
-        request,
-        env,
-        ctx,
-        this.createOAuthHelpers(env),
-        grantProps
-      );
-    } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'invalid_token',
-        error_description: error instanceof Error ? error.message : 'Invalid access token'
-      }), {
-        status: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"'
-        }
-      });
     }
-  }
 
+    const [userId, grantId, _] = tokenParts;
+
+    // Generate token ID from the full token
+    const accessTokenId = await generateTokenId(accessToken);
+
+    // Look up the token record, which now contains the denormalized grant information
+    const tokenKey = `token:${userId}:${grantId}:${accessTokenId}`;
+    const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
+
+    // Verify token
+    if (!tokenData) {
+      return createErrorResponse(
+        'invalid_token',
+        'Invalid access token',
+        401,
+        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
+      );
+    }
+
+    // Check if token is expired (should be auto-deleted by KV TTL, but double-check)
+    const now = Math.floor(Date.now() / 1000);
+    if (tokenData.expiresAt < now) {
+      return createErrorResponse(
+        'invalid_token',
+        'Access token expired',
+        401,
+        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
+      );
+    }
+
+    // Extract the denormalized grant data directly from the token
+    const grantProps = tokenData.grant.props;
+
+    // Call the API handler with the grant props from the token
+    return this.options.apiHandler(
+      request,
+      env,
+      ctx,
+      this.createOAuthHelpers(env),
+      grantProps
+    );
+  }
   /**
    * Creates the helper methods object for OAuth operations
    * This is passed to the handler functions to allow them to interact with the OAuth system
@@ -1079,6 +1031,34 @@ const DEFAULT_ACCESS_TOKEN_TTL = 60 * 60;
 const TOKEN_LENGTH = 32;
 
 // Helper Functions
+/**
+ * Helper function to create OAuth error responses
+ * @param code - OAuth error code (e.g., 'invalid_request', 'invalid_token')
+ * @param description - Human-readable error description
+ * @param status - HTTP status code (default: 400)
+ * @param headers - Additional headers to include
+ * @returns A Response object with the error
+ */
+function createErrorResponse(
+  code: string,
+  description: string,
+  status: number = 400,
+  headers: Record<string, string> = {}
+): Response {
+  const body = JSON.stringify({
+    error: code,
+    error_description: description
+  });
+
+  return new Response(body, {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...headers
+    }
+  });
+}
+
 /**
  * Hashes a secret value using SHA-256
  * @param secret - The secret value to hash
