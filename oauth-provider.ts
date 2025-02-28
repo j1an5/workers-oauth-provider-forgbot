@@ -1,4 +1,9 @@
-// my-oauth.ts
+/**
+ * OAuth 2.0 Provider implementation for Cloudflare Workers
+ * Implements authorization code flow with support for refresh tokens
+ * and dynamic client registration.
+ */
+export class OAuthProvider {// my-oauth.ts
 
 // Types
 
@@ -112,10 +117,11 @@ export interface OAuthHelpers {
   createClient(clientInfo: Partial<ClientInfo>): Promise<ClientInfo>;
 
   /**
-   * Lists all registered OAuth clients
-   * @returns A Promise resolving to an array of client information
+   * Lists all registered OAuth clients with pagination support
+   * @param options - Optional pagination parameters (limit and cursor)
+   * @returns A Promise resolving to the list result with items and optional cursor
    */
-  listClients(): Promise<ClientInfo[]>;
+  listClients(options?: ListOptions): Promise<ListResult<ClientInfo>>;
 
   /**
    * Updates an existing OAuth client
@@ -133,11 +139,12 @@ export interface OAuthHelpers {
   deleteClient(clientId: string): Promise<boolean>;
 
   /**
-   * Lists all authorization grants for a specific user
+   * Lists all authorization grants for a specific user with pagination support
    * @param userId - The ID of the user whose grants to list
-   * @returns A Promise resolving to an array of grant information
+   * @param options - Optional pagination parameters (limit and cursor)
+   * @returns A Promise resolving to the list result with items and optional cursor
    */
-  listUserGrants(userId: string): Promise<Grant[]>;
+  listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<Grant>>;
 
   /**
    * Revokes an authorization grant
@@ -404,11 +411,34 @@ function base64UrlEncode(str: string): string {
 }
 
 /**
- * OAuth 2.0 Provider implementation for Cloudflare Workers
- * Implements authorization code flow with support for refresh tokens
- * and dynamic client registration.
+ * Options for listing operations that support pagination
  */
-export class OAuthProvider {
+export interface ListOptions {
+  /**
+   * Maximum number of items to return (max 1000)
+   */
+  limit?: number;
+
+  /**
+   * Cursor for pagination (from a previous listing operation)
+   */
+  cursor?: string;
+}
+
+/**
+ * Result of a listing operation with pagination support
+ */
+export interface ListResult<T> {
+  /**
+   * The list of items
+   */
+  items: T[];
+
+  /**
+   * Cursor to get the next page of results, if there are more results
+   */
+  cursor?: string;
+}
   /**
    * Configuration options for the provider
    */
@@ -1180,16 +1210,30 @@ class OAuthHelpersImpl implements OAuthHelpers {
   }
 
   /**
-   * Lists all registered OAuth clients
-   * @returns A Promise resolving to an array of client information
+   * Lists all registered OAuth clients with pagination support
+   * @param options - Optional pagination parameters (limit and cursor)
+   * @returns A Promise resolving to the list result with items and optional cursor
    */
-  async listClients(): Promise<ClientInfo[]> {
-    // Use the KV list() function to get all client keys with the prefix 'client:'
-    const { keys } = await this.env.OAUTH_KV.list({ prefix: 'client:' });
+  async listClients(options?: ListOptions): Promise<ListResult<ClientInfo>> {
+    // Prepare list options for KV
+    const listOptions: { limit?: number; cursor?: string; prefix: string } = {
+      prefix: 'client:'
+    };
+
+    if (options?.limit !== undefined) {
+      listOptions.limit = options.limit;
+    }
+
+    if (options?.cursor !== undefined) {
+      listOptions.cursor = options.cursor;
+    }
+
+    // Use the KV list() function to get client keys with pagination
+    const response = await this.env.OAUTH_KV.list(listOptions);
 
     // Fetch all clients in parallel
     const clients: ClientInfo[] = [];
-    const promises = keys.map(async (key: { name: string }) => {
+    const promises = response.keys.map(async (key: { name: string }) => {
       const clientId = key.name.substring('client:'.length);
       const client = await this.provider.getClient(this.env, clientId);
       if (client) {
@@ -1198,7 +1242,12 @@ class OAuthHelpersImpl implements OAuthHelpers {
     });
 
     await Promise.all(promises);
-    return clients;
+
+    // Return result with cursor if there are more results
+    return {
+      items: clients,
+      cursor: response.list_complete ? undefined : response.cursor
+    };
   }
 
   /**
@@ -1258,17 +1307,31 @@ class OAuthHelpersImpl implements OAuthHelpers {
   }
 
   /**
-   * Lists all authorization grants for a specific user
+   * Lists all authorization grants for a specific user with pagination support
    * @param userId - The ID of the user whose grants to list
-   * @returns A Promise resolving to an array of grant information
+   * @param options - Optional pagination parameters (limit and cursor)
+   * @returns A Promise resolving to the list result with items and optional cursor
    */
-  async listUserGrants(userId: string): Promise<Grant[]> {
-    // Use the KV list() function to get all grant keys with the user ID prefix
-    const { keys } = await this.env.OAUTH_KV.list({ prefix: `grant:${userId}:` });
+  async listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<Grant>> {
+    // Prepare list options for KV
+    const listOptions: { limit?: number; cursor?: string; prefix: string } = {
+      prefix: `grant:${userId}:`
+    };
+
+    if (options?.limit !== undefined) {
+      listOptions.limit = options.limit;
+    }
+
+    if (options?.cursor !== undefined) {
+      listOptions.cursor = options.cursor;
+    }
+
+    // Use the KV list() function to get grant keys with pagination
+    const response = await this.env.OAUTH_KV.list(listOptions);
 
     // Fetch all grants in parallel
     const grants: Grant[] = [];
-    const promises = keys.map(async (key: { name: string }) => {
+    const promises = response.keys.map(async (key: { name: string }) => {
       const grantData = await this.env.OAUTH_KV.get(key.name, { type: 'json' });
       if (grantData) {
         grants.push(grantData);
@@ -1276,7 +1339,12 @@ class OAuthHelpersImpl implements OAuthHelpers {
     });
 
     await Promise.all(promises);
-    return grants;
+
+    // Return result with cursor if there are more results
+    return {
+      items: grants,
+      cursor: response.list_complete ? undefined : response.cursor
+    };
   }
 
   /**
