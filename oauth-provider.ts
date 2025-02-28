@@ -2,85 +2,354 @@
 
 // Types
 
+/**
+ * Configuration options for the OAuth Provider
+ */
 export interface OAuthProviderOptions {
+  /**
+   * Base URL for API routes. Requests with URLs starting with this prefix
+   * will be treated as API requests and require a valid access token.
+   */
   apiRoute: string;
+
+  /**
+   * Handler function for API requests that have a valid access token.
+   * This function receives the authenticated user properties along with the request.
+   */
   apiHandler: ApiHandler;
+
+  /**
+   * Handler function for all non-API requests or API requests without a valid token.
+   */
   defaultHandler: DefaultHandler;
+
+  /**
+   * URL of the OAuth authorization endpoint where users can grant permissions.
+   * This URL is used in OAuth metadata and is not handled by the provider itself.
+   */
   authorizeEndpoint: string;
+
+  /**
+   * URL of the token endpoint which the provider will implement.
+   * This endpoint handles token issuance, refresh, and revocation.
+   */
   tokenEndpoint: string;
+
+  /**
+   * Optional URL for the client registration endpoint.
+   * If provided, the provider will implement dynamic client registration.
+   */
   clientRegistrationEndpoint?: string;
-  accessTokenTTL?: number;  // in seconds, default 1 hour
-  refreshTokenTTL?: number; // in seconds, default 30 days
+
+  /**
+   * Time-to-live for access tokens in seconds.
+   * Defaults to 1 hour (3600 seconds) if not specified.
+   */
+  accessTokenTTL?: number;
+
+  /**
+   * Time-to-live for refresh tokens in seconds.
+   * Defaults to 30 days (2592000 seconds) if not specified.
+   */
+  refreshTokenTTL?: number;
 }
 
+/**
+ * Handler function type for authenticated API requests
+ * @param request - The original HTTP request
+ * @param env - Cloudflare Worker environment variables
+ * @param ctx - Cloudflare Worker execution context
+ * @param oauth - Helper methods for OAuth operations
+ * @param props - User-specific properties from the authorization grant
+ * @returns A Promise resolving to an HTTP Response
+ */
 export interface ApiHandler {
   (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers, props: any): Promise<Response>;
 }
 
+/**
+ * Handler function type for non-API or unauthenticated requests
+ * @param request - The original HTTP request
+ * @param env - Cloudflare Worker environment variables
+ * @param ctx - Cloudflare Worker execution context
+ * @param oauth - Helper methods for OAuth operations
+ * @returns A Promise resolving to an HTTP Response
+ */
 export interface DefaultHandler {
   (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers): Promise<Response>;
 }
 
+/**
+ * Helper methods for OAuth operations provided to handler functions
+ */
 export interface OAuthHelpers {
+  /**
+   * Parses an OAuth authorization request from the HTTP request
+   * @param request - The HTTP request containing OAuth parameters
+   * @returns The parsed authorization request parameters
+   */
   parseAuthRequest(request: Request): AuthRequest;
+
+  /**
+   * Looks up a client by its client ID
+   * @param clientId - The client ID to look up
+   * @returns A Promise resolving to the client info, or null if not found
+   */
   lookupClient(clientId: string): Promise<ClientInfo | null>;
+
+  /**
+   * Completes an authorization request by creating a grant and authorization code
+   * @param options - Options specifying the grant details
+   * @returns A Promise resolving to an object containing the redirect URL
+   */
   completeAuthorization(options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }>;
+
+  /**
+   * Creates a new OAuth client
+   * @param clientInfo - Partial client information to create the client with
+   * @returns A Promise resolving to the created client info
+   */
   createClient(clientInfo: Partial<ClientInfo>): Promise<ClientInfo>;
+
+  /**
+   * Lists all registered OAuth clients
+   * @returns A Promise resolving to an array of client information
+   */
   listClients(): Promise<ClientInfo[]>;
+
+  /**
+   * Updates an existing OAuth client
+   * @param clientId - The ID of the client to update
+   * @param updates - Partial client information with fields to update
+   * @returns A Promise resolving to the updated client info, or null if not found
+   */
   updateClient(clientId: string, updates: Partial<ClientInfo>): Promise<ClientInfo | null>;
+
+  /**
+   * Deletes an OAuth client
+   * @param clientId - The ID of the client to delete
+   * @returns A Promise resolving to true if successful, false otherwise
+   */
   deleteClient(clientId: string): Promise<boolean>;
+
+  /**
+   * Lists all authorization grants for a specific user
+   * @param userId - The ID of the user whose grants to list
+   * @returns A Promise resolving to an array of grant information
+   */
   listUserGrants(userId: string): Promise<Grant[]>;
+
+  /**
+   * Revokes an authorization grant
+   * @param grantId - The ID of the grant to revoke
+   * @returns A Promise resolving to true if successful, false otherwise
+   */
   revokeGrant(grantId: string): Promise<boolean>;
 }
 
+/**
+ * Parsed OAuth authorization request parameters
+ */
 export interface AuthRequest {
+  /**
+   * OAuth response type (e.g., "code" for authorization code flow)
+   */
   responseType: string;
+
+  /**
+   * Client identifier for the OAuth client
+   */
   clientId: string;
+
+  /**
+   * URL to redirect to after authorization
+   */
   redirectUri: string;
+
+  /**
+   * Array of requested permission scopes
+   */
   scope: string[];
+
+  /**
+   * Client state value to be returned in the redirect
+   */
   state: string;
 }
 
+/**
+ * OAuth client registration information
+ */
 export interface ClientInfo {
+  /**
+   * Unique identifier for the client
+   */
   clientId: string;
+
+  /**
+   * Secret used to authenticate the client (stored as a hash)
+   */
   clientSecret: string;
+
+  /**
+   * List of allowed redirect URIs for the client
+   */
   redirectUris: string[];
+
+  /**
+   * Human-readable name of the client application
+   */
   clientName?: string;
+
+  /**
+   * URL to the client's logo
+   */
   logoUri?: string;
+
+  /**
+   * URL to the client's homepage
+   */
   clientUri?: string;
+
+  /**
+   * URL to the client's privacy policy
+   */
   policyUri?: string;
+
+  /**
+   * URL to the client's terms of service
+   */
   tosUri?: string;
+
+  /**
+   * URL to the client's JSON Web Key Set for validating signatures
+   */
   jwksUri?: string;
+
+  /**
+   * List of email addresses for contacting the client developers
+   */
   contacts?: string[];
+
+  /**
+   * List of grant types the client supports
+   */
   grantTypes?: string[];
+
+  /**
+   * List of response types the client supports
+   */
   responseTypes?: string[];
+
+  /**
+   * Unix timestamp when the client was registered
+   */
   registrationDate?: number;
 }
 
+/**
+ * Options for completing an authorization request
+ */
 export interface CompleteAuthorizationOptions {
+  /**
+   * The original parsed authorization request
+   */
   request: AuthRequest;
+
+  /**
+   * Identifier for the user granting the authorization
+   */
   userId: string;
+
+  /**
+   * Application-specific metadata to associate with this grant
+   */
   metadata: any;
+
+  /**
+   * List of scopes that were actually granted (may differ from requested scopes)
+   */
   scope: string[];
+
+  /**
+   * Application-specific properties to include with API requests
+   * authorized by this grant
+   */
   props: any;
-  expiresIn?: number; // in seconds
+
+  /**
+   * Optional custom expiration time in seconds for the tokens
+   */
+  expiresIn?: number;
 }
 
+/**
+ * Authorization grant record
+ */
 export interface Grant {
+  /**
+   * Unique identifier for the grant
+   */
   id: string;
+
+  /**
+   * Client that received this grant
+   */
   clientId: string;
+
+  /**
+   * User who authorized this grant
+   */
   userId: string;
+
+  /**
+   * List of scopes that were granted
+   */
   scope: string[];
+
+  /**
+   * Application-specific metadata associated with this grant
+   */
   metadata: any;
+
+  /**
+   * Application-specific properties included with API requests
+   */
   props: any;
+
+  /**
+   * Unix timestamp when the grant was created
+   */
   createdAt: number;
 }
 
+/**
+ * Token record stored in KV
+ */
 export interface Token {
+  /**
+   * Unique identifier for the token (hash of the actual token)
+   */
   id: string;
+
+  /**
+   * Identifier of the grant this token is associated with
+   */
   grantId: string;
+
+  /**
+   * Type of token (access or refresh)
+   */
   type: 'access' | 'refresh';
+
+  /**
+   * Unix timestamp when the token was created
+   */
   createdAt: number;
+
+  /**
+   * Unix timestamp when the token expires
+   */
   expiresAt: number;
 }
 
@@ -128,10 +397,21 @@ function base64UrlEncode(str: string): string {
     .replace(/=/g, '');
 }
 
-// Main OAuthProvider Class
+/**
+ * OAuth 2.0 Provider implementation for Cloudflare Workers
+ * Implements authorization code flow with support for refresh tokens
+ * and dynamic client registration.
+ */
 export class OAuthProvider {
+  /**
+   * Configuration options for the provider
+   */
   private options: OAuthProviderOptions;
 
+  /**
+   * Creates a new OAuth provider instance
+   * @param options - Configuration options for the provider
+   */
   constructor(options: OAuthProviderOptions) {
     this.options = {
       ...options,
@@ -140,7 +420,14 @@ export class OAuthProvider {
     };
   }
 
-  // Main fetch handler
+  /**
+   * Main fetch handler for the Worker
+   * Routes requests to the appropriate handler based on the URL
+   * @param request - The HTTP request
+   * @param env - Cloudflare Worker environment variables
+   * @param ctx - Cloudflare Worker execution context
+   * @returns A Promise resolving to an HTTP Response
+   */
   async fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
@@ -169,22 +456,42 @@ export class OAuthProvider {
     return this.options.defaultHandler(request, env, ctx, this.createOAuthHelpers(env));
   }
 
+  /**
+   * Checks if a URL matches the configured token endpoint
+   * @param url - The URL to check
+   * @returns True if the URL matches the token endpoint
+   */
   private isTokenEndpoint(url: URL): boolean {
     const tokenUrl = new URL(this.options.tokenEndpoint);
     return url.pathname === tokenUrl.pathname;
   }
 
+  /**
+   * Checks if a URL matches the configured client registration endpoint
+   * @param url - The URL to check
+   * @returns True if the URL matches the client registration endpoint
+   */
   private isClientRegistrationEndpoint(url: URL): boolean {
     if (!this.options.clientRegistrationEndpoint) return false;
     const registrationUrl = new URL(this.options.clientRegistrationEndpoint);
     return url.pathname === registrationUrl.pathname;
   }
 
+  /**
+   * Checks if a URL is an API request based on the configured API route
+   * @param url - The URL to check
+   * @returns True if the URL is an API request
+   */
   private isApiRequest(url: URL): boolean {
     const apiUrl = new URL(this.options.apiRoute);
     return url.href.startsWith(apiUrl.href);
   }
 
+  /**
+   * Handles the OAuth metadata discovery endpoint
+   * Implements RFC 8414 for OAuth Server Metadata
+   * @returns Response with OAuth server metadata
+   */
   private async handleMetadataDiscovery(): Promise<Response> {
     const metadata = {
       issuer: new URL(this.options.tokenEndpoint).origin,
@@ -204,6 +511,13 @@ export class OAuthProvider {
     });
   }
 
+  /**
+   * Handles client authentication and token issuance via the token endpoint
+   * Supports authorization_code and refresh_token grant types
+   * @param request - The HTTP request
+   * @param env - Cloudflare Worker environment variables
+   * @returns Response with token data or error
+   */
   private async handleTokenRequest(request: Request, env: any): Promise<Response> {
     // Only accept POST requests
     if (request.method !== 'POST') {
@@ -298,6 +612,14 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Handles the authorization code grant type
+   * Exchanges an authorization code for access and refresh tokens
+   * @param body - The parsed request body
+   * @param clientInfo - The authenticated client information
+   * @param env - Cloudflare Worker environment variables
+   * @returns Response with token data or error
+   */
   private async handleAuthorizationCodeGrant(
     body: any,
     clientInfo: ClientInfo,
@@ -418,6 +740,14 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Handles the refresh token grant type
+   * Issues a new access token using a refresh token
+   * @param body - The parsed request body
+   * @param clientInfo - The authenticated client information
+   * @param env - Cloudflare Worker environment variables
+   * @returns Response with token data or error
+   */
   private async handleRefreshTokenGrant(
     body: any,
     clientInfo: ClientInfo,
@@ -500,6 +830,12 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Handles the dynamic client registration endpoint (RFC 7591)
+   * @param request - The HTTP request
+   * @param env - Cloudflare Worker environment variables
+   * @returns Response with client registration data or error
+   */
   private async handleClientRegistration(request: Request, env: any): Promise<Response> {
     if (!this.options.clientRegistrationEndpoint) {
       return new Response(JSON.stringify({
@@ -599,6 +935,13 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Handles API requests by validating the access token and calling the API handler
+   * @param request - The HTTP request
+   * @param env - Cloudflare Worker environment variables
+   * @param ctx - Cloudflare Worker execution context
+   * @returns Response from the API handler or error
+   */
   private async handleApiRequest(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
     // Get access token from Authorization header
     const authHeader = request.headers.get('Authorization');
@@ -664,6 +1007,12 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Fetches client information from KV storage
+   * @param env - Cloudflare Worker environment variables
+   * @param clientId - The client ID to look up
+   * @returns The client information, or null if not found
+   */
   private async getClient(env: any, clientId: string): Promise<ClientInfo | null> {
     try {
       const clientKey = `client:${clientId}`;
@@ -674,6 +1023,11 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Updates the list of client IDs in KV storage
+   * @param env - Cloudflare Worker environment variables
+   * @param clientId - The client ID to add to the list
+   */
   private async updateClientsList(env: any, clientId: string): Promise<void> {
     try {
       const clientsListKey = 'clients_list';
@@ -689,8 +1043,19 @@ export class OAuthProvider {
     }
   }
 
+  /**
+   * Creates the helper methods object for OAuth operations
+   * This is passed to the handler functions to allow them to interact with the OAuth system
+   * @param env - Cloudflare Worker environment variables
+   * @returns An object containing OAuth helper methods
+   */
   private createOAuthHelpers(env: any): OAuthHelpers {
     return {
+      /**
+       * Parses an OAuth authorization request from the HTTP request
+       * @param request - The HTTP request containing OAuth parameters
+       * @returns The parsed authorization request parameters
+       */
       parseAuthRequest: (request: Request): AuthRequest => {
         const url = new URL(request.url);
         const responseType = url.searchParams.get('response_type') || '';
@@ -708,10 +1073,20 @@ export class OAuthProvider {
         };
       },
 
+      /**
+       * Looks up a client by its client ID
+       * @param clientId - The client ID to look up
+       * @returns A Promise resolving to the client info, or null if not found
+       */
       lookupClient: async (clientId: string): Promise<ClientInfo | null> => {
         return await this.getClient(env, clientId);
       },
 
+      /**
+       * Completes an authorization request by creating a grant and authorization code
+       * @param options - Options specifying the grant details
+       * @returns A Promise resolving to an object containing the redirect URL
+       */
       completeAuthorization: async (options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }> => {
         // Generate a random authorization code
         const code = generateRandomString(32);
@@ -753,6 +1128,11 @@ export class OAuthProvider {
         return { redirectTo: redirectUrl.toString() };
       },
 
+      /**
+       * Creates a new OAuth client
+       * @param clientInfo - Partial client information to create the client with
+       * @returns A Promise resolving to the created client info
+       */
       createClient: async (clientInfo: Partial<ClientInfo>): Promise<ClientInfo> => {
         const clientId = generateRandomString(16);
         const clientSecret = generateRandomString(32);
@@ -788,6 +1168,10 @@ export class OAuthProvider {
         return clientResponse;
       },
 
+      /**
+       * Lists all registered OAuth clients
+       * @returns A Promise resolving to an array of client information
+       */
       listClients: async (): Promise<ClientInfo[]> => {
         const clientsListKey = 'clients_list';
         const clientsList = await env.OAUTH_KV.get(clientsListKey, { type: 'json' }) || [];
@@ -803,6 +1187,12 @@ export class OAuthProvider {
         return clients;
       },
 
+      /**
+       * Updates an existing OAuth client
+       * @param clientId - The ID of the client to update
+       * @param updates - Partial client information with fields to update
+       * @returns A Promise resolving to the updated client info, or null if not found
+       */
       updateClient: async (clientId: string, updates: Partial<ClientInfo>): Promise<ClientInfo | null> => {
         const client = await this.getClient(env, clientId);
         if (!client) {
@@ -838,6 +1228,11 @@ export class OAuthProvider {
         return updatedClient;
       },
 
+      /**
+       * Deletes an OAuth client
+       * @param clientId - The ID of the client to delete
+       * @returns A Promise resolving to true if successful, false otherwise
+       */
       deleteClient: async (clientId: string): Promise<boolean> => {
         try {
           // Delete client
@@ -855,6 +1250,11 @@ export class OAuthProvider {
         }
       },
 
+      /**
+       * Lists all authorization grants for a specific user
+       * @param userId - The ID of the user whose grants to list
+       * @returns A Promise resolving to an array of grant information
+       */
       listUserGrants: async (userId: string): Promise<Grant[]> => {
         const userGrantsKey = `user_grants:${userId}`;
         const grantIds = await env.OAUTH_KV.get(userGrantsKey, { type: 'json' }) || [];
@@ -871,6 +1271,11 @@ export class OAuthProvider {
         return grants;
       },
 
+      /**
+       * Revokes an authorization grant
+       * @param grantId - The ID of the grant to revoke
+       * @returns A Promise resolving to true if successful, false otherwise
+       */
       revokeGrant: async (grantId: string): Promise<boolean> => {
         try {
           // Get grant to find user ID
@@ -901,6 +1306,12 @@ export class OAuthProvider {
     };
   }
 
+  /**
+   * Updates the list of grant IDs for a user in KV storage
+   * @param env - Cloudflare Worker environment variables
+   * @param userId - The user ID to update grants for
+   * @param grantId - The grant ID to add to the user's list
+   */
   private async updateUserGrantsList(env: any, userId: string, grantId: string): Promise<void> {
     try {
       const userGrantsKey = `user_grants:${userId}`;
@@ -917,4 +1328,8 @@ export class OAuthProvider {
   }
 }
 
+/**
+ * Default export of the OAuth provider
+ * This allows users to import the library and use it directly as in the example
+ */
 export default OAuthProvider;
