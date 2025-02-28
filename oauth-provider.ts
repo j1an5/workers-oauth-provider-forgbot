@@ -328,6 +328,8 @@ export interface Grant {
 
 /**
  * Token record stored in KV
+ * Note: The actual token format is "{userId}:{grantId}:{random-secret}"
+ * but we still only store the hash of the full token string.
  */
 export interface Token {
   /**
@@ -672,11 +674,14 @@ export class OAuthProvider {
         throw new Error('Client ID mismatch');
       }
 
-      // Generate tokens
-      const accessToken = generateRandomString(TOKEN_LENGTH);
-      const refreshToken = generateRandomString(TOKEN_LENGTH);
+      // Generate tokens with embedded user and grant IDs for parallel lookups
+      const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
+      const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
 
-      // Use WebCrypto to generate token IDs
+      const accessToken = `${userId}:${grantId}:${accessTokenSecret}`;
+      const refreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
+
+      // Use WebCrypto to generate token IDs from the full token strings
       const accessTokenId = await generateTokenId(accessToken);
       const refreshTokenId = await generateTokenId(refreshToken);
 
@@ -786,8 +791,9 @@ export class OAuthProvider {
         throw new Error('Client ID mismatch');
       }
 
-      // Generate new access token
-      const newAccessToken = generateRandomString(TOKEN_LENGTH);
+      // Generate new access token with embedded user and grant IDs
+      const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
+      const newAccessToken = `${tokenData.userId}:${tokenData.grantId}:${accessTokenSecret}`;
       const accessTokenId = await generateTokenId(newAccessToken);
 
       const now = Math.floor(Date.now() / 1000);
@@ -958,11 +964,24 @@ export class OAuthProvider {
     const accessToken = authHeader.substring(7);
 
     try {
-      // Verify token and get associated grant
-      const accessTokenId = await generateTokenId(accessToken);
-      const tokenKey = `token:${accessTokenId}`;
-      const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
+      // Parse the token to extract user ID and grant ID for parallel lookups
+      const tokenParts = accessToken.split(':');
+      if (tokenParts.length !== 3) {
+        throw new Error('Invalid token format');
+      }
 
+      const [userId, grantId, _] = tokenParts;
+
+      // Generate token ID from the full token
+      const accessTokenId = await generateTokenId(accessToken);
+
+      // Perform parallel lookups of token record and grant record
+      const [tokenData, grantData] = await Promise.all([
+        env.OAUTH_KV.get(`token:${accessTokenId}`, { type: 'json' }),
+        env.OAUTH_KV.get(`grant:${userId}:${grantId}`, { type: 'json' })
+      ]);
+
+      // Verify token
       if (!tokenData || tokenData.type !== 'access') {
         throw new Error('Invalid access token');
       }
@@ -973,12 +992,14 @@ export class OAuthProvider {
         throw new Error('Access token expired');
       }
 
-      // Get the associated grant using the user ID
-      const grantKey = `grant:${tokenData.userId}:${tokenData.grantId}`;
-      const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
-
+      // Verify grant exists
       if (!grantData) {
         throw new Error('Grant not found');
+      }
+
+      // Verify token matches the correct grant
+      if (tokenData.grantId !== grantId || tokenData.userId !== userId) {
+        throw new Error('Token does not match grant');
       }
 
       // Call the API handler with the grant props
