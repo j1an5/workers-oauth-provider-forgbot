@@ -1,7 +1,3 @@
-Prompt: Could you write a document (text or markdown) explaining the schema of the OAUTH_KV storage? This should be appropriate to include in the repository to help developers understand the code.
-
-Claude responded:
-
 # OAuth KV Storage Schema
 
 This document describes the schema used in the OAUTH_KV storage for the OAuth 2.0 provider library. The library uses Cloudflare Workers KV to store all OAuth-related data, including client registrations, authorization grants, and tokens.
@@ -35,7 +31,7 @@ Client records store OAuth client application information.
 ```json
 {
   "clientId": "abc123",
-  "clientSecret": "secureRandomSecret",
+  "clientSecret": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
   "redirectUris": ["https://app.example.com/callback"],
   "clientName": "Example App",
   "logoUri": "https://app.example.com/logo.png",
@@ -49,6 +45,8 @@ Client records store OAuth client application information.
   "registrationDate": 1644256123
 }
 ```
+
+> **Note:** The `clientSecret` is stored as a SHA-256 hash, not in plaintext. The actual secret is only returned to the client when initially created or updated, and never stored.
 
 **TTL:** No expiration (persistent storage)
 
@@ -83,9 +81,11 @@ Grant records store information about permissions a user has granted to an appli
 
 Authorization codes are short-lived credentials issued during the authorization flow.
 
-**Key format:** `auth_code:{code}`
+**Key format:** `auth_code:{codeHash}`
 
 **Content:** The grant ID associated with this authorization code (string value)
+
+> **Note:** The authorization code is hashed using SHA-256 before being used as part of the key. Only the hash of the code is stored, not the code itself.
 
 **TTL:** 10 minutes (600 seconds)
 
@@ -151,21 +151,28 @@ AuthCode -> Grant (1:1 temporary relationship)
 
 ## Security Considerations
 
-1. **Token Storage**: The actual token strings are never stored. Instead, we store the SHA-256 hash of the token string. This ensures that even if the KV data is compromised, the actual tokens cannot be retrieved.
+1. **Sensitive Value Storage**: No sensitive values are stored in plaintext in KV storage:
+   - Access and refresh tokens are stored as SHA-256 hashes
+   - Client secrets are stored as SHA-256 hashes
+   - Authorization codes are stored as SHA-256 hashes
+
+   This ensures that even if the KV data is compromised, the actual sensitive values cannot be retrieved.
 
 2. **TTL-based Expiration**: Tokens and authorization codes automatically expire using KV's TTL feature, reducing the need for manual cleanup.
 
-3. **Client Secrets**: Client secrets are stored in plaintext in the KV storage, under the assumption that the KV namespace is secure. In production environments with high-security requirements, consider implementing additional encryption for client secrets.
+3. **Cryptographic Hash Verification**: When validating client credentials or authorization codes, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
 
 ## Example Workflow
 
-1. A client is registered, creating a `client:{clientId}` entry and updating `clients_list`.
+1. A client is registered, creating a `client:{clientId}` entry with a hashed client secret and updating `clients_list`.
 2. A user authorizes the client, creating a `grant:{grantId}` entry and updating `user_grants:{userId}`.
-3. An authorization code is issued, creating a temporary `auth_code:{code}` entry pointing to the grant.
-4. The client exchanges the code for tokens, creating `token:{accessTokenId}` and `token:{refreshTokenId}` entries.
-5. The authorization code is deleted after use.
-6. Access tokens expire automatically after their TTL.
-7. Refresh tokens can be used to obtain new access tokens until they expire.
+3. An authorization code is issued, a hash of the code is calculated, and a temporary `auth_code:{codeHash}` entry is created pointing to the grant.
+4. The client exchanges the code for tokens:
+   - The code is hashed and looked up
+   - After verification, the `auth_code:{codeHash}` entry is deleted
+   - New tokens are generated and their hashes are stored as `token:{accessTokenId}` and `token:{refreshTokenId}` entries
+5. Access tokens expire automatically after their TTL.
+6. Refresh tokens can be used to obtain new access tokens until they expire.
 
 ## Implementation Notes
 

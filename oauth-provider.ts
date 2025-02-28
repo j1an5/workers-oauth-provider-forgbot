@@ -24,7 +24,7 @@ export interface DefaultHandler {
 export interface OAuthHelpers {
   parseAuthRequest(request: Request): AuthRequest;
   lookupClient(clientId: string): Promise<ClientInfo | null>;
-  completeAuthorization(options: CompleteAuthorizationOptions): { redirectTo: string };
+  completeAuthorization(options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }>;
   createClient(clientInfo: Partial<ClientInfo>): Promise<ClientInfo>;
   listClients(): Promise<ClientInfo[]>;
   updateClient(clientId: string, updates: Partial<ClientInfo>): Promise<ClientInfo | null>;
@@ -88,6 +88,11 @@ export interface Token {
 const DEFAULT_ACCESS_TOKEN_TTL = 60 * 60; // 1 hour
 const DEFAULT_REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
 const TOKEN_LENGTH = 32;
+
+async function hashSecret(secret: string): Promise<string> {
+  // Use the same approach as generateTokenId for consistency
+  return generateTokenId(secret);
+}
 
 // Helper Functions
 function generateRandomString(length: number): string {
@@ -253,7 +258,19 @@ export class OAuthProvider {
 
     // Verify client
     const clientInfo = await this.getClient(env, clientId);
-    if (!clientInfo || clientInfo.clientSecret !== clientSecret) {
+    if (!clientInfo) {
+      return new Response(JSON.stringify({
+        error: 'invalid_client',
+        error_description: 'Client not found'
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+
+    // Hash the provided secret and compare with stored hash
+    const providedSecretHash = await hashSecret(clientSecret);
+    if (providedSecretHash !== clientInfo.clientSecret) {
       return new Response(JSON.stringify({
         error: 'invalid_client',
         error_description: 'Client authentication failed'
@@ -312,7 +329,9 @@ export class OAuthProvider {
 
     // Verify the code and get the grant
     try {
-      const codeKey = `auth_code:${code}`;
+      // Hash the auth code before lookup
+      const codeHash = await hashSecret(code);
+      const codeKey = `auth_code:${codeHash}`;
       const grantId = await env.OAUTH_KV.get(codeKey);
 
       if (!grantId) {
@@ -522,9 +541,12 @@ export class OAuthProvider {
       const clientId = generateRandomString(16);
       const clientSecret = generateRandomString(32);
 
+      // Hash the client secret before storing
+      const hashedSecret = await hashSecret(clientSecret);
+
       const clientInfo: ClientInfo = {
         clientId,
-        clientSecret,
+        clientSecret: hashedSecret, // Store the hashed secret
         redirectUris: clientMetadata.redirect_uris,
         clientName: clientMetadata.client_name,
         logoUri: clientMetadata.logo_uri,
@@ -544,10 +566,10 @@ export class OAuthProvider {
       // Also store in clients list
       await this.updateClientsList(env, clientId);
 
-      // Return client information
+      // Return client information with the original unhashed secret
       const response = {
         client_id: clientInfo.clientId,
-        client_secret: clientInfo.clientSecret,
+        client_secret: clientSecret, // Return the original unhashed secret
         redirect_uris: clientInfo.redirectUris,
         client_name: clientInfo.clientName,
         logo_uri: clientInfo.logoUri,
@@ -690,7 +712,7 @@ export class OAuthProvider {
         return await this.getClient(env, clientId);
       },
 
-      completeAuthorization: (options: CompleteAuthorizationOptions): { redirectTo: string } => {
+      completeAuthorization: async (options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }> => {
         // Generate a random authorization code
         const code = generateRandomString(32);
 
@@ -709,14 +731,17 @@ export class OAuthProvider {
         };
 
         // Store the grant with long TTL (or no expiry)
-        env.OAUTH_KV.put(`grant:${grantId}`, JSON.stringify(grant));
+        await env.OAUTH_KV.put(`grant:${grantId}`, JSON.stringify(grant));
 
         // Also store in user's grants list
-        this.updateUserGrantsList(env, options.userId, grantId);
+        await this.updateUserGrantsList(env, options.userId, grantId);
+
+        // Hash the authorization code before storing
+        const codeHash = await hashSecret(code);
 
         // Store the authorization code with short TTL (10 minutes)
         const codeExpiresIn = 600; // 10 minutes
-        env.OAUTH_KV.put(`auth_code:${code}`, grantId, { expirationTtl: codeExpiresIn });
+        await env.OAUTH_KV.put(`auth_code:${codeHash}`, grantId, { expirationTtl: codeExpiresIn });
 
         // Build the redirect URL
         const redirectUrl = new URL(options.request.redirectUri);
@@ -732,9 +757,12 @@ export class OAuthProvider {
         const clientId = generateRandomString(16);
         const clientSecret = generateRandomString(32);
 
+        // Hash the client secret
+        const hashedSecret = await hashSecret(clientSecret);
+
         const newClient: ClientInfo = {
           clientId,
-          clientSecret,
+          clientSecret: hashedSecret, // Store hashed secret
           redirectUris: clientInfo.redirectUris || [],
           clientName: clientInfo.clientName,
           logoUri: clientInfo.logoUri,
@@ -751,7 +779,13 @@ export class OAuthProvider {
         await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(newClient));
         await this.updateClientsList(env, clientId);
 
-        return newClient;
+        // Return client with unhashed secret
+        const clientResponse = {
+          ...newClient,
+          clientSecret // Return original unhashed secret
+        };
+
+        return clientResponse;
       },
 
       listClients: async (): Promise<ClientInfo[]> => {
@@ -775,14 +809,32 @@ export class OAuthProvider {
           return null;
         }
 
+        // Handle secret updates - if a new secret is provided, hash it
+        let secretToStore = client.clientSecret;
+        let originalSecret: string | undefined = undefined;
+
+        if (updates.clientSecret) {
+          originalSecret = updates.clientSecret;
+          secretToStore = await hashSecret(updates.clientSecret);
+        }
+
         const updatedClient: ClientInfo = {
           ...client,
           ...updates,
           clientId: client.clientId, // Ensure clientId doesn't change
-          clientSecret: updates.clientSecret || client.clientSecret
+          clientSecret: secretToStore // Use hashed secret
         };
 
         await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(updatedClient));
+
+        // Return client with unhashed secret if a new one was provided
+        if (originalSecret) {
+          return {
+            ...updatedClient,
+            clientSecret: originalSecret
+          };
+        }
+
         return updatedClient;
       },
 
