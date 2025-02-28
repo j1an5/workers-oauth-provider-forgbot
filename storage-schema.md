@@ -14,7 +14,6 @@ All keys in the KV namespace follow a consistent pattern to make them easily ide
 |--------|---------|---------|
 | `client:` | Client registration data | `client:abc123` |
 | `grant:{userId}:` | Authorization grant data | `grant:user123:xyz789` |
-| `auth_code:` | Authorization codes | `auth_code:def456` |
 | `token:` | Access and refresh tokens | `token:ghi789` |
 
 ## Data Structures
@@ -99,24 +98,6 @@ Grant records store information about permissions a user has granted to an appli
 - No expiration after the authorization code is exchanged for tokens
 
 > **Note:** The grant record includes the hash of the authorization code initially, which is replaced by the hash of the refresh token after the code is exchanged. The record also has a TTL during the authorization process, which is removed when the code is exchanged for tokens to make the grant permanent.
-
-### Authorization Codes
-
-Authorization codes are short-lived credentials issued during the authorization flow.
-
-**Key format:** `auth_code:{codeHash}`
-
-**Content Example:**
-```json
-{
-  "grantId": "xyz789",
-  "userId": "user123"
-}
-```
-
-> **Note:** The authorization code is hashed using SHA-256 before being used as part of the key. Only the hash of the code is stored, not the code itself. The content includes both the grant ID and user ID to reconstruct the full grant key later.
-
-**TTL:** 10 minutes (600 seconds)
 
 ### Tokens
 
