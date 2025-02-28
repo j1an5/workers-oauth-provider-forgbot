@@ -1,5 +1,4 @@
 // my-oauth.ts
-import { createHash } from 'crypto';
 
 // Types
 
@@ -102,8 +101,19 @@ function generateRandomString(length: number): string {
   return result;
 }
 
-function generateTokenId(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+async function generateTokenId(token: string): Promise<string> {
+  // Convert the token string to a Uint8Array
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+
+  // Use the WebCrypto API to create a SHA-256 hash
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+  // Convert the hash to a hex string
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+  return hashHex;
 }
 
 function base64UrlEncode(str: string): string {
@@ -329,8 +339,9 @@ export class OAuthProvider {
       const accessToken = generateRandomString(TOKEN_LENGTH);
       const refreshToken = generateRandomString(TOKEN_LENGTH);
 
-      const accessTokenId = generateTokenId(accessToken);
-      const refreshTokenId = generateTokenId(refreshToken);
+      // Use WebCrypto to generate token IDs
+      const accessTokenId = await generateTokenId(accessToken);
+      const refreshTokenId = await generateTokenId(refreshToken);
 
       const now = Math.floor(Date.now() / 1000);
       const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
@@ -407,7 +418,7 @@ export class OAuthProvider {
 
     try {
       // Get refresh token from storage
-      const refreshTokenId = generateTokenId(refreshToken);
+      const refreshTokenId = await generateTokenId(refreshToken);
       const tokenKey = `token:${refreshTokenId}`;
       const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
 
@@ -430,7 +441,7 @@ export class OAuthProvider {
 
       // Generate new access token
       const newAccessToken = generateRandomString(TOKEN_LENGTH);
-      const accessTokenId = generateTokenId(newAccessToken);
+      const accessTokenId = await generateTokenId(newAccessToken);
 
       const now = Math.floor(Date.now() / 1000);
       const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
@@ -587,7 +598,7 @@ export class OAuthProvider {
 
     try {
       // Verify token and get associated grant
-      const accessTokenId = generateTokenId(accessToken);
+      const accessTokenId = await generateTokenId(accessToken);
       const tokenKey = `token:${accessTokenId}`;
       const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
 
