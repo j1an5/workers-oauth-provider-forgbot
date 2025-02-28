@@ -1035,262 +1035,275 @@ export class OAuthProvider {
    * Creates the helper methods object for OAuth operations
    * This is passed to the handler functions to allow them to interact with the OAuth system
    * @param env - Cloudflare Worker environment variables
-   * @returns An object containing OAuth helper methods
+   * @returns An instance of OAuthHelpers
    */
   private createOAuthHelpers(env: any): OAuthHelpers {
-    return {
-      /**
-       * Parses an OAuth authorization request from the HTTP request
-       * @param request - The HTTP request containing OAuth parameters
-       * @returns The parsed authorization request parameters
-       */
-      parseAuthRequest: (request: Request): AuthRequest => {
-        const url = new URL(request.url);
-        const responseType = url.searchParams.get('response_type') || '';
-        const clientId = url.searchParams.get('client_id') || '';
-        const redirectUri = url.searchParams.get('redirect_uri') || '';
-        const scope = (url.searchParams.get('scope') || '').split(' ').filter(Boolean);
-        const state = url.searchParams.get('state') || '';
-
-        return {
-          responseType,
-          clientId,
-          redirectUri,
-          scope,
-          state
-        };
-      },
-
-      /**
-       * Looks up a client by its client ID
-       * @param clientId - The client ID to look up
-       * @returns A Promise resolving to the client info, or null if not found
-       */
-      lookupClient: async (clientId: string): Promise<ClientInfo | null> => {
-        return await this.getClient(env, clientId);
-      },
-
-      /**
-       * Completes an authorization request by creating a grant and authorization code
-       * @param options - Options specifying the grant details
-       * @returns A Promise resolving to an object containing the redirect URL
-       */
-      completeAuthorization: async (options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }> => {
-        // Generate a random authorization code
-        const code = generateRandomString(32);
-
-        // Generate a unique grant ID
-        const grantId = generateRandomString(16);
-
-        // Store the grant
-        const grant: Grant = {
-          id: grantId,
-          clientId: options.request.clientId,
-          userId: options.userId,
-          scope: options.scope,
-          metadata: options.metadata,
-          props: options.props,
-          createdAt: Math.floor(Date.now() / 1000)
-        };
-
-        // Store the grant with a key that includes the user ID
-        const grantKey = `grant:${options.userId}:${grantId}`;
-        await env.OAUTH_KV.put(grantKey, JSON.stringify(grant));
-
-        // Hash the authorization code before storing
-        const codeHash = await hashSecret(code);
-
-        // Store the authorization code with short TTL (10 minutes)
-        const codeExpiresIn = 600; // 10 minutes
-        // Store user ID with the grant ID so we can reconstruct the full grant key later
-        await env.OAUTH_KV.put(`auth_code:${codeHash}`, JSON.stringify({
-          grantId,
-          userId: options.userId
-        }), { expirationTtl: codeExpiresIn });
-
-        // Build the redirect URL
-        const redirectUrl = new URL(options.request.redirectUri);
-        redirectUrl.searchParams.set('code', code);
-        if (options.request.state) {
-          redirectUrl.searchParams.set('state', options.request.state);
-        }
-
-        return { redirectTo: redirectUrl.toString() };
-      },
-
-      /**
-       * Creates a new OAuth client
-       * @param clientInfo - Partial client information to create the client with
-       * @returns A Promise resolving to the created client info
-       */
-      createClient: async (clientInfo: Partial<ClientInfo>): Promise<ClientInfo> => {
-        const clientId = generateRandomString(16);
-        const clientSecret = generateRandomString(32);
-
-        // Hash the client secret
-        const hashedSecret = await hashSecret(clientSecret);
-
-        const newClient: ClientInfo = {
-          clientId,
-          clientSecret: hashedSecret, // Store hashed secret
-          redirectUris: clientInfo.redirectUris || [],
-          clientName: clientInfo.clientName,
-          logoUri: clientInfo.logoUri,
-          clientUri: clientInfo.clientUri,
-          policyUri: clientInfo.policyUri,
-          tosUri: clientInfo.tosUri,
-          jwksUri: clientInfo.jwksUri,
-          contacts: clientInfo.contacts,
-          grantTypes: clientInfo.grantTypes || ['authorization_code', 'refresh_token'],
-          responseTypes: clientInfo.responseTypes || ['code'],
-          registrationDate: Math.floor(Date.now() / 1000)
-        };
-
-        await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(newClient));
-
-        // Return client with unhashed secret
-        const clientResponse = {
-          ...newClient,
-          clientSecret // Return original unhashed secret
-        };
-
-        return clientResponse;
-      },
-
-      /**
-       * Lists all registered OAuth clients
-       * @returns A Promise resolving to an array of client information
-       */
-      listClients: async (): Promise<ClientInfo[]> => {
-        // Use the KV list() function to get all client keys with the prefix 'client:'
-        const { keys } = await env.OAUTH_KV.list({ prefix: 'client:' });
-
-        // Fetch all clients in parallel
-        const clients: ClientInfo[] = [];
-        const promises = keys.map(async (key: { name: string }) => {
-          const clientId = key.name.substring('client:'.length);
-          const client = await this.getClient(env, clientId);
-          if (client) {
-            clients.push(client);
-          }
-        });
-
-        await Promise.all(promises);
-        return clients;
-      },
-
-      /**
-       * Updates an existing OAuth client
-       * @param clientId - The ID of the client to update
-       * @param updates - Partial client information with fields to update
-       * @returns A Promise resolving to the updated client info, or null if not found
-       */
-      updateClient: async (clientId: string, updates: Partial<ClientInfo>): Promise<ClientInfo | null> => {
-        const client = await this.getClient(env, clientId);
-        if (!client) {
-          return null;
-        }
-
-        // Handle secret updates - if a new secret is provided, hash it
-        let secretToStore = client.clientSecret;
-        let originalSecret: string | undefined = undefined;
-
-        if (updates.clientSecret) {
-          originalSecret = updates.clientSecret;
-          secretToStore = await hashSecret(updates.clientSecret);
-        }
-
-        const updatedClient: ClientInfo = {
-          ...client,
-          ...updates,
-          clientId: client.clientId, // Ensure clientId doesn't change
-          clientSecret: secretToStore // Use hashed secret
-        };
-
-        await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(updatedClient));
-
-        // Return client with unhashed secret if a new one was provided
-        if (originalSecret) {
-          return {
-            ...updatedClient,
-            clientSecret: originalSecret
-          };
-        }
-
-        return updatedClient;
-      },
-
-      /**
-       * Deletes an OAuth client
-       * @param clientId - The ID of the client to delete
-       * @returns A Promise resolving to true if successful, false otherwise
-       */
-      deleteClient: async (clientId: string): Promise<boolean> => {
-        try {
-          // Delete client
-          await env.OAUTH_KV.delete(`client:${clientId}`);
-          return true;
-        } catch (error) {
-          return false;
-        }
-      },
-
-      /**
-       * Lists all authorization grants for a specific user
-       * @param userId - The ID of the user whose grants to list
-       * @returns A Promise resolving to an array of grant information
-       */
-      listUserGrants: async (userId: string): Promise<Grant[]> => {
-        // Use the KV list() function to get all grant keys with the user ID prefix
-        const { keys } = await env.OAUTH_KV.list({ prefix: `grant:${userId}:` });
-
-        // Fetch all grants in parallel
-        const grants: Grant[] = [];
-        const promises = keys.map(async (key: { name: string }) => {
-          const grantData = await env.OAUTH_KV.get(key.name, { type: 'json' });
-          if (grantData) {
-            grants.push(grantData);
-          }
-        });
-
-        await Promise.all(promises);
-        return grants;
-      },
-
-      /**
-       * Revokes an authorization grant
-       * @param grantId - The ID of the grant to revoke
-       * @param userId - The ID of the user who owns the grant
-       * @returns A Promise resolving to true if successful, false otherwise
-       */
-      revokeGrant: async (grantId: string, userId: string): Promise<boolean> => {
-        try {
-          // Construct the full grant key with user ID
-          const grantKey = `grant:${userId}:${grantId}`;
-
-          // Check if the grant exists before attempting to delete
-          const grantExists = await env.OAUTH_KV.get(grantKey);
-          if (!grantExists) {
-            return false;
-          }
-
-          // Delete grant
-          await env.OAUTH_KV.delete(grantKey);
-
-          // Note: We don't need to delete tokens as they'll expire via TTL
-
-          return true;
-        } catch (error) {
-          return false;
-        }
-      }
-    };
+    return new OAuthHelpersImpl(env, this);
   }
 
 }
 
 /**
- * Default export of the OAuth provider
- * This allows users to import the library and use it directly as in the example
+ * Class that implements the OAuth helper methods
+ * Provides methods for OAuth operations needed by handlers
  */
-export default OAuthProvider;
+class OAuthHelpersImpl implements OAuthHelpers {
+  private env: any;
+  private provider: OAuthProvider;
+
+  /**
+   * Creates a new OAuthHelpers instance
+   * @param env - Cloudflare Worker environment variables
+   * @param provider - Reference to the parent provider instance
+   */
+  constructor(env: any, provider: OAuthProvider) {
+    this.env = env;
+    this.provider = provider;
+  }
+
+  /**
+   * Parses an OAuth authorization request from the HTTP request
+   * @param request - The HTTP request containing OAuth parameters
+   * @returns The parsed authorization request parameters
+   */
+  parseAuthRequest(request: Request): AuthRequest {
+    const url = new URL(request.url);
+    const responseType = url.searchParams.get('response_type') || '';
+    const clientId = url.searchParams.get('client_id') || '';
+    const redirectUri = url.searchParams.get('redirect_uri') || '';
+    const scope = (url.searchParams.get('scope') || '').split(' ').filter(Boolean);
+    const state = url.searchParams.get('state') || '';
+
+    return {
+      responseType,
+      clientId,
+      redirectUri,
+      scope,
+      state
+    };
+  }
+
+  /**
+   * Looks up a client by its client ID
+   * @param clientId - The client ID to look up
+   * @returns A Promise resolving to the client info, or null if not found
+   */
+  async lookupClient(clientId: string): Promise<ClientInfo | null> {
+    return await this.provider.getClient(this.env, clientId);
+  }
+
+  /**
+   * Completes an authorization request by creating a grant and authorization code
+   * @param options - Options specifying the grant details
+   * @returns A Promise resolving to an object containing the redirect URL
+   */
+  async completeAuthorization(options: CompleteAuthorizationOptions): Promise<{ redirectTo: string }> {
+    // Generate a random authorization code
+    const code = generateRandomString(32);
+
+    // Generate a unique grant ID
+    const grantId = generateRandomString(16);
+
+    // Store the grant
+    const grant: Grant = {
+      id: grantId,
+      clientId: options.request.clientId,
+      userId: options.userId,
+      scope: options.scope,
+      metadata: options.metadata,
+      props: options.props,
+      createdAt: Math.floor(Date.now() / 1000)
+    };
+
+    // Store the grant with a key that includes the user ID
+    const grantKey = `grant:${options.userId}:${grantId}`;
+    await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant));
+
+    // Hash the authorization code before storing
+    const codeHash = await hashSecret(code);
+
+    // Store the authorization code with short TTL (10 minutes)
+    const codeExpiresIn = 600; // 10 minutes
+    // Store user ID with the grant ID so we can reconstruct the full grant key later
+    await this.env.OAUTH_KV.put(`auth_code:${codeHash}`, JSON.stringify({
+      grantId,
+      userId: options.userId
+    }), { expirationTtl: codeExpiresIn });
+
+    // Build the redirect URL
+    const redirectUrl = new URL(options.request.redirectUri);
+    redirectUrl.searchParams.set('code', code);
+    if (options.request.state) {
+      redirectUrl.searchParams.set('state', options.request.state);
+    }
+
+    return { redirectTo: redirectUrl.toString() };
+  }
+
+  /**
+   * Creates a new OAuth client
+   * @param clientInfo - Partial client information to create the client with
+   * @returns A Promise resolving to the created client info
+   */
+  async createClient(clientInfo: Partial<ClientInfo>): Promise<ClientInfo> {
+    const clientId = generateRandomString(16);
+    const clientSecret = generateRandomString(32);
+
+    // Hash the client secret
+    const hashedSecret = await hashSecret(clientSecret);
+
+    const newClient: ClientInfo = {
+      clientId,
+      clientSecret: hashedSecret, // Store hashed secret
+      redirectUris: clientInfo.redirectUris || [],
+      clientName: clientInfo.clientName,
+      logoUri: clientInfo.logoUri,
+      clientUri: clientInfo.clientUri,
+      policyUri: clientInfo.policyUri,
+      tosUri: clientInfo.tosUri,
+      jwksUri: clientInfo.jwksUri,
+      contacts: clientInfo.contacts,
+      grantTypes: clientInfo.grantTypes || ['authorization_code', 'refresh_token'],
+      responseTypes: clientInfo.responseTypes || ['code'],
+      registrationDate: Math.floor(Date.now() / 1000)
+    };
+
+    await this.env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(newClient));
+
+    // Return client with unhashed secret
+    const clientResponse = {
+      ...newClient,
+      clientSecret // Return original unhashed secret
+    };
+
+    return clientResponse;
+  }
+
+  /**
+   * Lists all registered OAuth clients
+   * @returns A Promise resolving to an array of client information
+   */
+  async listClients(): Promise<ClientInfo[]> {
+    // Use the KV list() function to get all client keys with the prefix 'client:'
+    const { keys } = await this.env.OAUTH_KV.list({ prefix: 'client:' });
+
+    // Fetch all clients in parallel
+    const clients: ClientInfo[] = [];
+    const promises = keys.map(async (key: { name: string }) => {
+      const clientId = key.name.substring('client:'.length);
+      const client = await this.provider.getClient(this.env, clientId);
+      if (client) {
+        clients.push(client);
+      }
+    });
+
+    await Promise.all(promises);
+    return clients;
+  }
+
+  /**
+   * Updates an existing OAuth client
+   * @param clientId - The ID of the client to update
+   * @param updates - Partial client information with fields to update
+   * @returns A Promise resolving to the updated client info, or null if not found
+   */
+  async updateClient(clientId: string, updates: Partial<ClientInfo>): Promise<ClientInfo | null> {
+    const client = await this.provider.getClient(this.env, clientId);
+    if (!client) {
+      return null;
+    }
+
+    // Handle secret updates - if a new secret is provided, hash it
+    let secretToStore = client.clientSecret;
+    let originalSecret: string | undefined = undefined;
+
+    if (updates.clientSecret) {
+      originalSecret = updates.clientSecret;
+      secretToStore = await hashSecret(updates.clientSecret);
+    }
+
+    const updatedClient: ClientInfo = {
+      ...client,
+      ...updates,
+      clientId: client.clientId, // Ensure clientId doesn't change
+      clientSecret: secretToStore // Use hashed secret
+    };
+
+    await this.env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(updatedClient));
+
+    // Return client with unhashed secret if a new one was provided
+    if (originalSecret) {
+      return {
+        ...updatedClient,
+        clientSecret: originalSecret
+      };
+    }
+
+    return updatedClient;
+  }
+
+  /**
+   * Deletes an OAuth client
+   * @param clientId - The ID of the client to delete
+   * @returns A Promise resolving to true if successful, false otherwise
+   */
+  async deleteClient(clientId: string): Promise<boolean> {
+    try {
+      // Delete client
+      await this.env.OAUTH_KV.delete(`client:${clientId}`);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  /**
+   * Lists all authorization grants for a specific user
+   * @param userId - The ID of the user whose grants to list
+   * @returns A Promise resolving to an array of grant information
+   */
+  async listUserGrants(userId: string): Promise<Grant[]> {
+    // Use the KV list() function to get all grant keys with the user ID prefix
+    const { keys } = await this.env.OAUTH_KV.list({ prefix: `grant:${userId}:` });
+
+    // Fetch all grants in parallel
+    const grants: Grant[] = [];
+    const promises = keys.map(async (key: { name: string }) => {
+      const grantData = await this.env.OAUTH_KV.get(key.name, { type: 'json' });
+      if (grantData) {
+        grants.push(grantData);
+      }
+    });
+
+    await Promise.all(promises);
+    return grants;
+  }
+
+  /**
+   * Revokes an authorization grant
+   * @param grantId - The ID of the grant to revoke
+   * @param userId - The ID of the user who owns the grant
+   * @returns A Promise resolving to true if successful, false otherwise
+   */
+  async revokeGrant(grantId: string, userId: string): Promise<boolean> {
+    try {
+      // Construct the full grant key with user ID
+      const grantKey = `grant:${userId}:${grantId}`;
+
+      // Check if the grant exists before attempting to delete
+      const grantExists = await this.env.OAUTH_KV.get(grantKey);
+      if (!grantExists) {
+        return false;
+      }
+
+      // Delete grant
+      await this.env.OAUTH_KV.delete(grantKey);
+
+      // Note: We don't need to delete tokens as they'll expire via TTL
+
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+}
