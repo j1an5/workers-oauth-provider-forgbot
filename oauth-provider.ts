@@ -899,9 +899,6 @@ export class OAuthProvider {
       // Store client info
       await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientInfo));
 
-      // Also store in clients list
-      await this.updateClientsList(env, clientId);
-
       // Return client information with the original unhashed secret
       const response = {
         client_id: clientInfo.clientId,
@@ -1024,26 +1021,6 @@ export class OAuthProvider {
   }
 
   /**
-   * Updates the list of client IDs in KV storage
-   * @param env - Cloudflare Worker environment variables
-   * @param clientId - The client ID to add to the list
-   */
-  private async updateClientsList(env: any, clientId: string): Promise<void> {
-    try {
-      const clientsListKey = 'clients_list';
-      const clientsList = await env.OAUTH_KV.get(clientsListKey, { type: 'json' }) || [];
-
-      if (!clientsList.includes(clientId)) {
-        clientsList.push(clientId);
-        await env.OAUTH_KV.put(clientsListKey, JSON.stringify(clientsList));
-      }
-    } catch (error) {
-      // If this fails, it's not critical
-      console.error('Failed to update clients list:', error);
-    }
-  }
-
-  /**
    * Creates the helper methods object for OAuth operations
    * This is passed to the handler functions to allow them to interact with the OAuth system
    * @param env - Cloudflare Worker environment variables
@@ -1157,7 +1134,6 @@ export class OAuthProvider {
         };
 
         await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(newClient));
-        await this.updateClientsList(env, clientId);
 
         // Return client with unhashed secret
         const clientResponse = {
@@ -1173,17 +1149,20 @@ export class OAuthProvider {
        * @returns A Promise resolving to an array of client information
        */
       listClients: async (): Promise<ClientInfo[]> => {
-        const clientsListKey = 'clients_list';
-        const clientsList = await env.OAUTH_KV.get(clientsListKey, { type: 'json' }) || [];
+        // Use the KV list() function to get all client keys with the prefix 'client:'
+        const { keys } = await env.OAUTH_KV.list({ prefix: 'client:' });
 
+        // Fetch all clients in parallel
         const clients: ClientInfo[] = [];
-        for (const clientId of clientsList) {
+        const promises = keys.map(async (key: { name: string }) => {
+          const clientId = key.name.substring('client:'.length);
           const client = await this.getClient(env, clientId);
           if (client) {
             clients.push(client);
           }
-        }
+        });
 
+        await Promise.all(promises);
         return clients;
       },
 
@@ -1237,13 +1216,6 @@ export class OAuthProvider {
         try {
           // Delete client
           await env.OAUTH_KV.delete(`client:${clientId}`);
-
-          // Update clients list
-          const clientsListKey = 'clients_list';
-          const clientsList = await env.OAUTH_KV.get(clientsListKey, { type: 'json' }) || [];
-          const updatedList = clientsList.filter((id: string) => id !== clientId);
-          await env.OAUTH_KV.put(clientsListKey, JSON.stringify(updatedList));
-
           return true;
         } catch (error) {
           return false;
