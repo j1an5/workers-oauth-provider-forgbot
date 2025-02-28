@@ -46,12 +46,6 @@ export interface OAuthProviderOptions {
    * Defaults to 1 hour (3600 seconds) if not specified.
    */
   accessTokenTTL?: number;
-
-  /**
-   * Time-to-live for refresh tokens in seconds.
-   * Defaults to 30 days (2592000 seconds) if not specified.
-   */
-  refreshTokenTTL?: number;
 }
 
 /**
@@ -324,12 +318,18 @@ export interface Grant {
    * Unix timestamp when the grant was created
    */
   createdAt: number;
+
+  /**
+   * The hash of the refresh token associated with this grant
+   */
+  refreshTokenId?: string;
 }
 
 /**
  * Token record stored in KV
  * Note: The actual token format is "{userId}:{grantId}:{random-secret}"
  * but we still only store the hash of the full token string.
+ * This contains only access tokens; refresh tokens are stored within the grant records.
  */
 export interface Token {
   /**
@@ -346,11 +346,6 @@ export interface Token {
    * User ID associated with this token (needed to reconstruct the grant key)
    */
   userId: string;
-
-  /**
-   * Type of token (access or refresh)
-   */
-  type: 'access' | 'refresh';
 
   /**
    * Unix timestamp when the token was created
@@ -411,8 +406,7 @@ export class OAuthProvider {
   constructor(options: OAuthProviderOptions) {
     this.options = {
       ...options,
-      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL,
-      refreshTokenTTL: options.refreshTokenTTL || DEFAULT_REFRESH_TOKEN_TTL
+      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
     };
   }
 
@@ -687,39 +681,27 @@ export class OAuthProvider {
 
       const now = Math.floor(Date.now() / 1000);
       const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
-      const refreshTokenExpiresAt = now + this.options.refreshTokenTTL!;
 
       // Store access token
       const accessTokenData: Token = {
         id: accessTokenId,
         grantId: grantId,
-        userId: userId, // Include userId in token data
-        type: 'access',
+        userId: userId,
         createdAt: now,
         expiresAt: accessTokenExpiresAt
       };
 
-      // Store refresh token
-      const refreshTokenData: Token = {
-        id: refreshTokenId,
-        grantId: grantId,
-        userId: userId, // Include userId in token data
-        type: 'refresh',
-        createdAt: now,
-        expiresAt: refreshTokenExpiresAt
-      };
+      // Store refresh token hash in the grant record
+      grantData.refreshTokenId = refreshTokenId;
 
-      // Save tokens with TTL
+      // Update the grant with the refresh token hash
+      await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
+
+      // Save access token with TTL
       await env.OAUTH_KV.put(
         `token:${accessTokenId}`,
         JSON.stringify(accessTokenData),
         { expirationTtl: this.options.accessTokenTTL }
-      );
-
-      await env.OAUTH_KV.put(
-        `token:${refreshTokenId}`,
-        JSON.stringify(refreshTokenData),
-        { expirationTtl: this.options.refreshTokenTTL }
       );
 
       // Return the tokens
@@ -769,21 +751,28 @@ export class OAuthProvider {
     }
 
     try {
-      // Get refresh token from storage
-      const refreshTokenId = await generateTokenId(refreshToken);
-      const tokenKey = `token:${refreshTokenId}`;
-      const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
-
-      if (!tokenData || tokenData.type !== 'refresh') {
-        throw new Error('Invalid refresh token');
+      // Parse the token to extract user ID and grant ID
+      const tokenParts = refreshToken.split(':');
+      if (tokenParts.length !== 3) {
+        throw new Error('Invalid token format');
       }
 
+      const [userId, grantId, _] = tokenParts;
+
+      // Calculate the token hash
+      const refreshTokenId = await generateTokenId(refreshToken);
+
       // Get the associated grant using userId in the key
-      const grantKey = `grant:${tokenData.userId}:${tokenData.grantId}`;
+      const grantKey = `grant:${userId}:${grantId}`;
       const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
       if (!grantData) {
         throw new Error('Grant not found');
+      }
+
+      // Verify refresh token matches the one stored in the grant
+      if (grantData.refreshTokenId !== refreshTokenId) {
+        throw new Error('Invalid refresh token');
       }
 
       // Verify client ID matches
@@ -793,7 +782,7 @@ export class OAuthProvider {
 
       // Generate new access token with embedded user and grant IDs
       const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
-      const newAccessToken = `${tokenData.userId}:${tokenData.grantId}:${accessTokenSecret}`;
+      const newAccessToken = `${userId}:${grantId}:${accessTokenSecret}`;
       const accessTokenId = await generateTokenId(newAccessToken);
 
       const now = Math.floor(Date.now() / 1000);
@@ -802,9 +791,8 @@ export class OAuthProvider {
       // Store new access token
       const accessTokenData: Token = {
         id: accessTokenId,
-        grantId: tokenData.grantId,
-        userId: tokenData.userId, // Include the user ID
-        type: 'access',
+        grantId: grantId,
+        userId: userId,
         createdAt: now,
         expiresAt: accessTokenExpiresAt
       };
@@ -982,7 +970,7 @@ export class OAuthProvider {
       ]);
 
       // Verify token
-      if (!tokenData || tokenData.type !== 'access') {
+      if (!tokenData) {
         throw new Error('Invalid access token');
       }
 
@@ -1055,11 +1043,6 @@ export class OAuthProvider {
  * Default expiration time for access tokens (1 hour in seconds)
  */
 const DEFAULT_ACCESS_TOKEN_TTL = 60 * 60;
-
-/**
- * Default expiration time for refresh tokens (30 days in seconds)
- */
-const DEFAULT_REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60;
 
 /**
  * Length of generated token strings

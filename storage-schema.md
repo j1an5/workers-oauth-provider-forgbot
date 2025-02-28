@@ -50,7 +50,7 @@ Client records store OAuth client application information.
 
 ### Authorization Grants
 
-Grant records store information about permissions a user has granted to an application.
+Grant records store information about permissions a user has granted to an application, along with the refresh token for that grant.
 
 **Key format:** `grant:{userId}:{grantId}`
 
@@ -69,13 +69,14 @@ Grant records store information about permissions a user has granted to an appli
     "userId": 123,
     "username": "johndoe"
   },
-  "createdAt": 1644256123
+  "createdAt": 1644256123,
+  "refreshTokenId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
 }
 ```
 
 **TTL:** No expiration (persistent until revoked)
 
-> **Note:** The `userId` is included in the key, allowing efficient listing of all grants for a user using KV's `list()` function with a prefix.
+> **Note:** The `userId` is included in the key, allowing efficient listing of all grants for a user using KV's `list()` function with a prefix. The `refreshTokenId` is the hash of the refresh token, which is stored directly in the grant record.
 
 ### Authorization Codes
 
@@ -97,7 +98,7 @@ Authorization codes are short-lived credentials issued during the authorization 
 
 ### Tokens
 
-Token records store metadata about issued access and refresh tokens.
+Token records store metadata about issued access tokens.
 
 **Key format:** `token:{tokenId}`
 
@@ -107,46 +108,49 @@ Token records store metadata about issued access and refresh tokens.
   "id": "ghi789",
   "grantId": "xyz789",
   "userId": "user123",
-  "type": "access",
   "createdAt": 1644256123,
   "expiresAt": 1644259723
 }
 ```
 
-> **Note:** The `userId` is included in the token data to allow reconstructing the full grant key.
+> **Note:** The token format is `{userId}:{grantId}:{random-secret}` which embeds the identifiers needed for parallel lookups. Only access tokens are stored here; refresh tokens are stored in the grant records.
 
-**TTL:**
-- Access tokens: Typically 1 hour (3600 seconds) by default
-- Refresh tokens: Typically 30 days (2592000 seconds) by default
-
-> **Important:** The actual token strings are never stored in the KV storage. Only the token IDs (SHA-256 hashes of the token strings) are stored.
+**TTL:** Access tokens typically have a 1 hour (3600 seconds) TTL by default
 
 ## Security Considerations
 
 1. **Sensitive Value Storage**: No sensitive values are stored in plaintext in KV storage:
-   - Access and refresh tokens are stored as SHA-256 hashes
+   - Access tokens and refresh tokens are stored as SHA-256 hashes
    - Client secrets are stored as SHA-256 hashes
    - Authorization codes are stored as SHA-256 hashes
 
    This ensures that even if the KV data is compromised, the actual sensitive values cannot be retrieved.
 
-2. **TTL-based Expiration**: Tokens and authorization codes automatically expire using KV's TTL feature, reducing the need for manual cleanup.
+2. **Token Format**: Tokens use the format `{userId}:{grantId}:{random-secret}` which allows:
+   - Parallel lookups of token and grant records for better performance
+   - Verification that the token was issued for the specific grant and user
+   - Enhanced security through proper validation checks
 
-3. **Cryptographic Hash Verification**: When validating client credentials or authorization codes, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
+3. **TTL-based Expiration**: Access tokens automatically expire using KV's TTL feature, reducing the need for manual cleanup.
 
-4. **Efficient Key Design**: The key design leverages KV's list capabilities to efficiently query related data without maintaining separate indexes or lists.
+4. **Efficient Storage**: Refresh tokens are stored within the grant records, eliminating redundant storage and simplifying the data model.
+
+5. **Cryptographic Hash Verification**: When validating credentials, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
 
 ## Example Workflow
 
 1. A client is registered, creating a `client:{clientId}` entry with a hashed client secret.
-2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry.
+2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry (without a refresh token initially).
 3. An authorization code is issued, a hash of the code is calculated, and a temporary `auth_code:{codeHash}` entry is created containing both the grant ID and user ID.
 4. The client exchanges the code for tokens:
    - The code is hashed and looked up
    - After verification, the `auth_code:{codeHash}` entry is deleted
-   - New tokens are generated and their hashes are stored as `token:{accessTokenId}` and `token:{refreshTokenId}` entries, including the user ID in the token data
+   - A new refresh token is generated and its hash is stored in the grant record
+   - A new access token is generated and its hash is stored in a separate `token:{accessTokenId}` entry
+   - Both tokens are returned to the client
 5. Access tokens expire automatically after their TTL.
-6. Refresh tokens can be used to obtain new access tokens until they expire.
+6. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
+7. When using a refresh token, the client provides it, and after verification, a new access token is issued.
 
 ## Implementation Notes
 
