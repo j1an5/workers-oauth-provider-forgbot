@@ -343,7 +343,7 @@ export interface Token {
   grantId: string;
 
   /**
-   * User ID associated with this token (needed to reconstruct the grant key)
+   * User ID associated with this token
    */
   userId: string;
 
@@ -356,6 +356,26 @@ export interface Token {
    * Unix timestamp when the token expires
    */
   expiresAt: number;
+
+  /**
+   * Denormalized grant information for faster access
+   */
+  grant: {
+    /**
+     * Client that received this grant
+     */
+    clientId: string;
+
+    /**
+     * List of scopes that were granted
+     */
+    scope: string[];
+
+    /**
+     * Application-specific properties included with API requests
+     */
+    props: any;
+  };
 }
 
 /**
@@ -682,13 +702,18 @@ export class OAuthProvider {
       const now = Math.floor(Date.now() / 1000);
       const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
 
-      // Store access token
+      // Store access token with denormalized grant information
       const accessTokenData: Token = {
         id: accessTokenId,
         grantId: grantId,
         userId: userId,
         createdAt: now,
-        expiresAt: accessTokenExpiresAt
+        expiresAt: accessTokenExpiresAt,
+        grant: {
+          clientId: grantData.clientId,
+          scope: grantData.scope,
+          props: grantData.props
+        }
       };
 
       // Store refresh token hash in the grant record
@@ -699,7 +724,7 @@ export class OAuthProvider {
 
       // Save access token with TTL
       await env.OAUTH_KV.put(
-        `token:${accessTokenId}`,
+        `token:${userId}:${grantId}:${accessTokenId}`,
         JSON.stringify(accessTokenData),
         { expirationTtl: this.options.accessTokenTTL }
       );
@@ -788,17 +813,22 @@ export class OAuthProvider {
       const now = Math.floor(Date.now() / 1000);
       const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
 
-      // Store new access token
+      // Store new access token with denormalized grant information
       const accessTokenData: Token = {
         id: accessTokenId,
         grantId: grantId,
         userId: userId,
         createdAt: now,
-        expiresAt: accessTokenExpiresAt
+        expiresAt: accessTokenExpiresAt,
+        grant: {
+          clientId: grantData.clientId,
+          scope: grantData.scope,
+          props: grantData.props
+        }
       };
 
       await env.OAUTH_KV.put(
-        `token:${accessTokenId}`,
+        `token:${userId}:${grantId}:${accessTokenId}`,
         JSON.stringify(accessTokenData),
         { expirationTtl: this.options.accessTokenTTL }
       );
@@ -963,11 +993,9 @@ export class OAuthProvider {
       // Generate token ID from the full token
       const accessTokenId = await generateTokenId(accessToken);
 
-      // Perform parallel lookups of token record and grant record
-      const [tokenData, grantData] = await Promise.all([
-        env.OAUTH_KV.get(`token:${accessTokenId}`, { type: 'json' }),
-        env.OAUTH_KV.get(`grant:${userId}:${grantId}`, { type: 'json' })
-      ]);
+      // Look up the token record, which now contains the denormalized grant information
+      const tokenKey = `token:${userId}:${grantId}:${accessTokenId}`;
+      const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
 
       // Verify token
       if (!tokenData) {
@@ -980,23 +1008,24 @@ export class OAuthProvider {
         throw new Error('Access token expired');
       }
 
-      // Verify grant exists
-      if (!grantData) {
-        throw new Error('Grant not found');
-      }
+      // Extract the denormalized grant data directly from the token
+      const grantProps = tokenData.grant.props;
 
-      // Verify token matches the correct grant
-      if (tokenData.grantId !== grantId || tokenData.userId !== userId) {
-        throw new Error('Token does not match grant');
-      }
-
-      // Call the API handler with the grant props
+      // Call the API handler with the grant props from the token
       return this.options.apiHandler(
         request,
         env,
         ctx,
         this.createOAuthHelpers(env),
-        grantData.props
+        grantProps
+      );
+
+      return this.options.apiHandler(
+        request,
+        env,
+        ctx,
+        this.createOAuthHelpers(env),
+        grantProps
       );
     } catch (error) {
       return new Response(JSON.stringify({
@@ -1383,7 +1412,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
   }
 
   /**
-   * Revokes an authorization grant
+   * Revokes an authorization grant and all its associated access tokens
    * @param grantId - The ID of the grant to revoke
    * @param userId - The ID of the user who owns the grant
    * @returns A Promise resolving to true if successful, false otherwise
@@ -1399,13 +1428,46 @@ class OAuthHelpersImpl implements OAuthHelpers {
         return false;
       }
 
-      // Delete grant
-      await this.env.OAUTH_KV.delete(grantKey);
+      // Delete all access tokens associated with this grant
+      const tokenPrefix = `token:${userId}:${grantId}:`;
 
-      // Note: We don't need to delete tokens as they'll expire via TTL
+      // Handle pagination to ensure we delete all tokens even if there are more than 1000
+      let cursor: string | undefined;
+      let allTokensDeleted = false;
+
+      // Continue fetching and deleting tokens until we've processed all of them
+      while (!allTokensDeleted) {
+        const listOptions: { prefix: string; cursor?: string } = {
+          prefix: tokenPrefix
+        };
+
+        if (cursor) {
+          listOptions.cursor = cursor;
+        }
+
+        const result = await this.env.OAUTH_KV.list(listOptions);
+
+        // Delete each token in this batch
+        if (result.keys.length > 0) {
+          await Promise.all(result.keys.map((key: { name: string }) => {
+            return this.env.OAUTH_KV.delete(key.name);
+          }));
+        }
+
+        // Check if we need to fetch more tokens
+        if (result.list_complete) {
+          allTokensDeleted = true;
+        } else {
+          cursor = result.cursor;
+        }
+      }
+
+      // After all tokens are deleted, delete the grant itself
+      await this.env.OAUTH_KV.delete(grantKey);
 
       return true;
     } catch (error) {
+      console.error('Error revoking grant:', error);
       return false;
     }
   }

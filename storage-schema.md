@@ -98,9 +98,9 @@ Authorization codes are short-lived credentials issued during the authorization 
 
 ### Tokens
 
-Token records store metadata about issued access tokens.
+Token records store metadata about issued access tokens, including denormalized grant information for faster access.
 
-**Key format:** `token:{tokenId}`
+**Key format:** `token:{userId}:{grantId}:{tokenId}`
 
 **Content Example:**
 ```json
@@ -109,11 +109,19 @@ Token records store metadata about issued access tokens.
   "grantId": "xyz789",
   "userId": "user123",
   "createdAt": 1644256123,
-  "expiresAt": 1644259723
+  "expiresAt": 1644259723,
+  "grant": {
+    "clientId": "abc123",
+    "scope": ["document.read", "document.write"],
+    "props": {
+      "userId": 123,
+      "username": "johndoe"
+    }
+  }
 }
 ```
 
-> **Note:** The token format is `{userId}:{grantId}:{random-secret}` which embeds the identifiers needed for parallel lookups. Only access tokens are stored here; refresh tokens are stored in the grant records.
+> **Note:** The token format is `{userId}:{grantId}:{random-secret}` which embeds the identifiers needed for efficient lookups. The token key format includes the user ID and grant ID to enable efficient revocation of all tokens for a specific grant. The token record contains denormalized grant information to eliminate the need for a separate grant lookup during token validation.
 
 **TTL:** Access tokens typically have a 1 hour (3600 seconds) TTL by default
 
@@ -127,15 +135,23 @@ Token records store metadata about issued access tokens.
    This ensures that even if the KV data is compromised, the actual sensitive values cannot be retrieved.
 
 2. **Token Format**: Tokens use the format `{userId}:{grantId}:{random-secret}` which allows:
-   - Parallel lookups of token and grant records for better performance
+   - Direct access to token records without needing to look up grants separately
    - Verification that the token was issued for the specific grant and user
    - Enhanced security through proper validation checks
 
 3. **TTL-based Expiration**: Access tokens automatically expire using KV's TTL feature, reducing the need for manual cleanup.
 
-4. **Efficient Storage**: Refresh tokens are stored within the grant records, eliminating redundant storage and simplifying the data model.
+4. **Efficient Storage**:
+   - Refresh tokens are stored within the grant records, eliminating redundant storage
+   - Grant data is denormalized into token records for faster validation
+   - Token keys include user ID and grant ID to enable efficient revocation
 
-5. **Cryptographic Hash Verification**: When validating credentials, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
+5. **Structured Key Design**: The key format `token:{userId}:{grantId}:{tokenId}` enables:
+   - Efficient revocation of all tokens for a specific grant
+   - Easy lookup of all tokens issued to a specific user
+   - Clean organization of the key-value namespace
+
+6. **Cryptographic Hash Verification**: When validating credentials, the system hashes the provided value and compares it with the stored hash, rather than comparing plaintext values.
 
 ## Example Workflow
 
@@ -146,11 +162,17 @@ Token records store metadata about issued access tokens.
    - The code is hashed and looked up
    - After verification, the `auth_code:{codeHash}` entry is deleted
    - A new refresh token is generated and its hash is stored in the grant record
-   - A new access token is generated and its hash is stored in a separate `token:{accessTokenId}` entry
+   - A new access token is generated and its hash is stored as `token:{userId}:{grantId}:{accessTokenId}` with denormalized grant data
    - Both tokens are returned to the client
-5. Access tokens expire automatically after their TTL.
-6. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
-7. When using a refresh token, the client provides it, and after verification, a new access token is issued.
+5. When the client makes API requests with the access token:
+   - The system looks up the token directly using the structured key format
+   - Grant information is already available in the token record, eliminating need for a separate lookup
+   - The API handler is called with the grant props from the token record
+6. Access tokens expire automatically after their TTL.
+7. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
+8. When a grant is revoked:
+   - All associated access tokens are found using the key prefix `token:{userId}:{grantId}:` and deleted
+   - The grant record is deleted, which also effectively revokes the refresh token
 
 ## Implementation Notes
 
