@@ -1,9 +1,4 @@
-/**
- * OAuth 2.0 Provider implementation for Cloudflare Workers
- * Implements authorization code flow with support for refresh tokens
- * and dynamic client registration.
- */
-export class OAuthProvider {// my-oauth.ts
+// my-oauth.ts
 
 // Types
 
@@ -366,50 +361,6 @@ export interface Token {
   expiresAt: number;
 }
 
-// Constants
-const DEFAULT_ACCESS_TOKEN_TTL = 60 * 60; // 1 hour
-const DEFAULT_REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60; // 30 days
-const TOKEN_LENGTH = 32;
-
-async function hashSecret(secret: string): Promise<string> {
-  // Use the same approach as generateTokenId for consistency
-  return generateTokenId(secret);
-}
-
-// Helper Functions
-function generateRandomString(length: number): string {
-  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  const values = new Uint8Array(length);
-  crypto.getRandomValues(values);
-  for (let i = 0; i < length; i++) {
-    result += characters.charAt(values[i] % characters.length);
-  }
-  return result;
-}
-
-async function generateTokenId(token: string): Promise<string> {
-  // Convert the token string to a Uint8Array
-  const encoder = new TextEncoder();
-  const data = encoder.encode(token);
-
-  // Use the WebCrypto API to create a SHA-256 hash
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-
-  // Convert the hash to a hex string
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-
-  return hashHex;
-}
-
-function base64UrlEncode(str: string): string {
-  return btoa(str)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
-}
-
 /**
  * Options for listing operations that support pagination
  */
@@ -439,6 +390,13 @@ export interface ListResult<T> {
    */
   cursor?: string;
 }
+
+/**
+ * OAuth 2.0 Provider implementation for Cloudflare Workers
+ * Implements authorization code flow with support for refresh tokens
+ * and dynamic client registration.
+ */
+export class OAuthProvider {
   /**
    * Configuration options for the provider
    */
@@ -1046,22 +1004,6 @@ export interface ListResult<T> {
   }
 
   /**
-   * Fetches client information from KV storage
-   * @param env - Cloudflare Worker environment variables
-   * @param clientId - The client ID to look up
-   * @returns The client information, or null if not found
-   */
-  private async getClient(env: any, clientId: string): Promise<ClientInfo | null> {
-    try {
-      const clientKey = `client:${clientId}`;
-      const clientData = await env.OAUTH_KV.get(clientKey, { type: 'json' });
-      return clientData;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
    * Creates the helper methods object for OAuth operations
    * This is passed to the handler functions to allow them to interact with the OAuth system
    * @param env - Cloudflare Worker environment variables
@@ -1071,6 +1013,95 @@ export interface ListResult<T> {
     return new OAuthHelpersImpl(env, this);
   }
 
+  /**
+   * Fetches client information from KV storage
+   * @param env - Cloudflare Worker environment variables
+   * @param clientId - The client ID to look up
+   * @returns The client information, or null if not found
+   */
+  getClient(env: any, clientId: string): Promise<ClientInfo | null> {
+    try {
+      const clientKey = `client:${clientId}`;
+      return env.OAUTH_KV.get(clientKey, { type: 'json' });
+    } catch (error) {
+      return Promise.resolve(null);
+    }
+  }
+}
+
+// Constants
+/**
+ * Default expiration time for access tokens (1 hour in seconds)
+ */
+const DEFAULT_ACCESS_TOKEN_TTL = 60 * 60;
+
+/**
+ * Default expiration time for refresh tokens (30 days in seconds)
+ */
+const DEFAULT_REFRESH_TOKEN_TTL = 30 * 24 * 60 * 60;
+
+/**
+ * Length of generated token strings
+ */
+const TOKEN_LENGTH = 32;
+
+// Helper Functions
+/**
+ * Hashes a secret value using SHA-256
+ * @param secret - The secret value to hash
+ * @returns A hex string representation of the hash
+ */
+async function hashSecret(secret: string): Promise<string> {
+  // Use the same approach as generateTokenId for consistency
+  return generateTokenId(secret);
+}
+
+/**
+ * Generates a cryptographically secure random string
+ * @param length - The length of the string to generate
+ * @returns A random string of the specified length
+ */
+function generateRandomString(length: number): string {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = '';
+  const values = new Uint8Array(length);
+  crypto.getRandomValues(values);
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(values[i] % characters.length);
+  }
+  return result;
+}
+
+/**
+ * Generates a token ID by hashing the token value using SHA-256
+ * @param token - The token to hash
+ * @returns A hex string representation of the hash
+ */
+async function generateTokenId(token: string): Promise<string> {
+  // Convert the token string to a Uint8Array
+  const encoder = new TextEncoder();
+  const data = encoder.encode(token);
+
+  // Use the WebCrypto API to create a SHA-256 hash
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+  // Convert the hash to a hex string
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+
+  return hashHex;
+}
+
+/**
+ * Encodes a string as base64url (URL-safe base64)
+ * @param str - The string to encode
+ * @returns The base64url encoded string
+ */
+function base64UrlEncode(str: string): string {
+  return btoa(str)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
 }
 
 /**
@@ -1375,3 +1406,9 @@ class OAuthHelpersImpl implements OAuthHelpers {
     }
   }
 }
+
+/**
+ * Default export of the OAuth provider
+ * This allows users to import the library and use it directly as in the example
+ */
+export default OAuthProvider;
