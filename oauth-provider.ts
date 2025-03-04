@@ -46,6 +46,14 @@ export interface OAuthProviderOptions {
    * Defaults to 1 hour (3600 seconds) if not specified.
    */
   accessTokenTTL?: number;
+  
+  /**
+   * When true, implements OAuth 2.1's strict requirement for one-time use refresh tokens.
+   * When enabled, each refresh token can only be used once, and a new refresh token
+   * is issued with each refresh grant.
+   * Defaults to false for backward compatibility.
+   */
+  strictOAuth21RefreshTokens?: boolean;
 }
 
 /**
@@ -454,7 +462,8 @@ export class OAuthProvider {
   constructor(options: OAuthProviderOptions) {
     this.options = {
       ...options,
-      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
+      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL,
+      strictOAuth21RefreshTokens: options.strictOAuth21RefreshTokens || false
     };
   }
 
@@ -664,8 +673,16 @@ export class OAuthProvider {
       );
     }
 
-    // Verify redirect URI is in the allowed list
-    if (redirectUri && !clientInfo.redirectUris.includes(redirectUri)) {
+    // OAuth 2.1 requires redirect_uri parameter
+    if (!redirectUri) {
+      return createErrorResponse(
+        'invalid_request',
+        'redirect_uri is required'
+      );
+    }
+    
+    // OAuth 2.1 requires exact match for redirect URIs
+    if (!clientInfo.redirectUris.includes(redirectUri)) {
       return createErrorResponse(
         'invalid_grant',
         'Invalid redirect URI'
@@ -896,18 +913,44 @@ export class OAuthProvider {
       }
     };
 
+    // Handle refresh token rotation if strictOAuth21RefreshTokens is enabled
+    let newRefreshToken: string | undefined;
+    let refreshTokenResponse: any = {};
+    
+    if (this.options.strictOAuth21RefreshTokens) {
+      // Generate a new refresh token (OAuth 2.1 one-time use requirement)
+      const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
+      newRefreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
+      const newRefreshTokenId = await generateTokenId(newRefreshToken);
+      
+      // Update the grant with the new refresh token hash
+      grantData.refreshTokenId = newRefreshTokenId;
+      
+      // Include the new refresh token in the response
+      refreshTokenResponse = {
+        refresh_token: newRefreshToken
+      };
+    }
+
+    // Save updated grant if needed
+    if (this.options.strictOAuth21RefreshTokens) {
+      await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
+    }
+
+    // Save access token with TTL
     await env.OAUTH_KV.put(
       `token:${userId}:${grantId}:${accessTokenId}`,
       JSON.stringify(accessTokenData),
       { expirationTtl: this.options.accessTokenTTL }
     );
 
-    // Return the new access token
+    // Return the new access token (and refresh token if rotated)
     return new Response(JSON.stringify({
       access_token: newAccessToken,
       token_type: 'bearer',
       expires_in: this.options.accessTokenTTL,
-      scope: grantData.scope.join(' ')
+      scope: grantData.scope.join(' '),
+      ...refreshTokenResponse
     }), {
       headers: { 'Content-Type': 'application/json' }
     });
@@ -1225,6 +1268,11 @@ class OAuthHelpersImpl implements OAuthHelpers {
     const state = url.searchParams.get('state') || '';
     const codeChallenge = url.searchParams.get('code_challenge') || undefined;
     const codeChallengeMethod = url.searchParams.get('code_challenge_method') || 'plain';
+    
+    // OAuth 2.1 does not support the implicit flow ('token' response type)
+    if (responseType === 'token') {
+      throw new Error('The implicit grant flow is not supported in OAuth 2.1');
+    }
 
     return {
       responseType,

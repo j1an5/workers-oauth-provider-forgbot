@@ -136,6 +136,7 @@ Token records store metadata about issued access tokens, including denormalized 
    - Access tokens and refresh tokens are stored as SHA-256 hashes
    - Client secrets are stored as SHA-256 hashes
    - Authorization codes are stored as SHA-256 hashes
+   - For PKCE, only the code challenge is stored, never the code verifier
 
    This ensures that even if the KV data is compromised, the actual sensitive values cannot be retrieved.
 
@@ -184,6 +185,7 @@ Token records store metadata about issued access tokens, including denormalized 
 5. Access tokens expire automatically after their TTL.
 
 6. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
+   - When the `strictOAuth21RefreshTokens` option is enabled, refresh tokens are one-time use, and a new refresh token is issued with each refresh grant.
 
 7. When a grant is revoked:
    - All associated access tokens are found using the key prefix `token:{userId}:{grantId}:` and deleted

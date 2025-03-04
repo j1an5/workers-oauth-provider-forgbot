@@ -47,6 +47,11 @@ export default new OAuthProvider({
   // but if provided, the OAuthProvider will implement this endpoint to allow dynamic client
   // registration.
   clientRegistrationEndpoint: "https://example.com/oauth/register",
+  
+  // OAuth 2.1 supports single-use refresh tokens. By default, this is disabled for backwards
+  // compatibility. Set to true if you want strict OAuth 2.1 compliant behavior where refresh
+  // tokens are single-use and a new refresh token is issued with each refresh.
+  strictOAuth21RefreshTokens: false,
 });
 
 // The OAuthProivder will pass through HTTP requests to this function if they aren't API requests
