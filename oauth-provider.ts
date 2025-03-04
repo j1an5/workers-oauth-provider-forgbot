@@ -172,6 +172,16 @@ export interface AuthRequest {
    * Client state value to be returned in the redirect
    */
   state: string;
+
+  /**
+   * PKCE code challenge (RFC 7636)
+   */
+  codeChallenge?: string;
+
+  /**
+   * PKCE code challenge method (plain or S256)
+   */
+  codeChallengeMethod?: string;
 }
 
 /**
@@ -329,6 +339,18 @@ export interface Grant {
    * Only present during the authorization code exchange process
    */
   authCodeId?: string;
+
+  /**
+   * PKCE code challenge for this authorization
+   * Only present during the authorization code exchange process
+   */
+  codeChallenge?: string;
+
+  /**
+   * PKCE code challenge method (plain or S256)
+   * Only present during the authorization code exchange process
+   */
+  codeChallengeMethod?: string;
 }
 
 /**
@@ -520,6 +542,7 @@ export class OAuthProvider {
       scopes_supported: [], // This could be configured in the future
       response_modes_supported: ["query"],
       revocation_endpoint: this.options.tokenEndpoint, // Reusing token endpoint for revocation
+      code_challenge_methods_supported: ["plain", "S256"], // PKCE support
     };
 
     return new Response(JSON.stringify(metadata), {
@@ -632,6 +655,7 @@ export class OAuthProvider {
   ): Promise<Response> {
     const code = body.code;
     const redirectUri = body.redirect_uri;
+    const codeVerifier = body.code_verifier;
 
     if (!code) {
       return createErrorResponse(
@@ -695,6 +719,38 @@ export class OAuthProvider {
       );
     }
 
+    // Verify PKCE code_verifier if code_challenge was provided during authorization
+    if (grantData.codeChallenge) {
+      if (!codeVerifier) {
+        return createErrorResponse(
+          'invalid_request',
+          'code_verifier is required for PKCE'
+        );
+      }
+
+      // Verify the code verifier against the stored code challenge
+      let calculatedChallenge: string;
+
+      if (grantData.codeChallengeMethod === 'S256') {
+        // SHA-256 transformation for S256 method
+        const encoder = new TextEncoder();
+        const data = encoder.encode(codeVerifier);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        calculatedChallenge = base64UrlEncode(String.fromCharCode(...hashArray));
+      } else {
+        // Plain method, direct comparison
+        calculatedChallenge = codeVerifier;
+      }
+
+      if (calculatedChallenge !== grantData.codeChallenge) {
+        return createErrorResponse(
+          'invalid_grant',
+          'Invalid PKCE code_verifier'
+        );
+      }
+    }
+
     // Code is valid - generate tokens
     const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
     const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
@@ -725,9 +781,12 @@ export class OAuthProvider {
 
     // Update the grant:
     // - Remove the auth code hash (it's single-use)
+    // - Remove PKCE-related fields (one-time use)
     // - Add the refresh token hash
     // - Make it permanent (no TTL)
     delete grantData.authCodeId;
+    delete grantData.codeChallenge;
+    delete grantData.codeChallengeMethod;
     grantData.refreshTokenId = refreshTokenId;
 
     // Update the grant with the refresh token hash and no TTL
@@ -1164,13 +1223,17 @@ class OAuthHelpersImpl implements OAuthHelpers {
     const redirectUri = url.searchParams.get('redirect_uri') || '';
     const scope = (url.searchParams.get('scope') || '').split(' ').filter(Boolean);
     const state = url.searchParams.get('state') || '';
+    const codeChallenge = url.searchParams.get('code_challenge') || undefined;
+    const codeChallengeMethod = url.searchParams.get('code_challenge_method') || 'plain';
 
     return {
       responseType,
       clientId,
       redirectUri,
       scope,
-      state
+      state,
+      codeChallenge,
+      codeChallengeMethod
     };
   }
 
@@ -1208,7 +1271,10 @@ class OAuthHelpersImpl implements OAuthHelpers {
       metadata: options.metadata,
       props: options.props,
       createdAt: Math.floor(Date.now() / 1000),
-      authCodeId: authCodeId // Store the auth code hash in the grant
+      authCodeId: authCodeId, // Store the auth code hash in the grant
+      // Store PKCE parameters if provided
+      codeChallenge: options.request.codeChallenge,
+      codeChallengeMethod: options.request.codeChallengeMethod
     };
 
     // Store the grant with a key that includes the user ID

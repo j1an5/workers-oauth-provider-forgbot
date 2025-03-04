@@ -69,7 +69,9 @@ Grant records store information about permissions a user has granted to an appli
     "username": "johndoe"
   },
   "createdAt": 1644256123,
-  "authCodeId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+  "authCodeId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+  "codeChallenge": "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
+  "codeChallengeMethod": "S256"
 }
 ```
 
@@ -162,11 +164,13 @@ Token records store metadata about issued access tokens, including denormalized 
 
 2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry that includes:
    - The hashed authorization code in the `authCodeId` field
+   - PKCE code challenge and method (if PKCE is used)
    - A 10-minute TTL on the grant record
 
 3. The client exchanges the authorization code for tokens:
    - The code is validated by comparing its hash to the one stored in the grant
-   - The `authCodeId` is removed from the grant
+   - If PKCE was used, the code_verifier is validated against the stored code_challenge
+   - The `authCodeId` and PKCE fields are removed from the grant
    - A refresh token is generated and its hash is stored in the grant's `refreshTokenId` field
    - The grant's TTL is removed, making it permanent
    - A new access token is generated and stored as `token:{userId}:{grantId}:{accessTokenId}` with denormalized grant data

@@ -1,6 +1,6 @@
-# OAuth 2 Provider Framework for Cloudflare Workers
+# OAuth 2.1 Provider Framework for Cloudflare Workers
 
-This is a TypeScript library that implements the provider side of the OAuth 2 protocol. The library is intended to be used on Cloudflare Workers.
+This is a TypeScript library that implements the provider side of the OAuth 2.1 protocol with PKCE support. The library is intended to be used on Cloudflare Workers.
 
 ## Benefits of this library
 
