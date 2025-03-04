@@ -46,14 +46,6 @@ export interface OAuthProviderOptions {
    * Defaults to 1 hour (3600 seconds) if not specified.
    */
   accessTokenTTL?: number;
-  
-  /**
-   * When true, implements OAuth 2.1's strict requirement for one-time use refresh tokens.
-   * When enabled, each refresh token can only be used once, and a new refresh token
-   * is issued with each refresh grant.
-   * Defaults to false for backward compatibility.
-   */
-  strictOAuth21RefreshTokens?: boolean;
 }
 
 /**
@@ -338,9 +330,15 @@ export interface Grant {
   createdAt: number;
 
   /**
-   * The hash of the refresh token associated with this grant
+   * The hash of the current refresh token associated with this grant
    */
   refreshTokenId?: string;
+
+  /**
+   * The hash of the previous refresh token associated with this grant
+   * This token is still valid until the new token is first used
+   */
+  previousRefreshTokenId?: string;
 
   /**
    * The hash of the authorization code associated with this grant
@@ -462,8 +460,7 @@ export class OAuthProvider {
   constructor(options: OAuthProviderOptions) {
     this.options = {
       ...options,
-      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL,
-      strictOAuth21RefreshTokens: options.strictOAuth21RefreshTokens || false
+      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
     };
   }
 
@@ -805,6 +802,7 @@ export class OAuthProvider {
     delete grantData.codeChallenge;
     delete grantData.codeChallengeMethod;
     grantData.refreshTokenId = refreshTokenId;
+    grantData.previousRefreshTokenId = undefined; // No previous token for first use
 
     // Update the grant with the refresh token hash and no TTL
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
@@ -862,7 +860,7 @@ export class OAuthProvider {
     const [userId, grantId, _] = tokenParts;
 
     // Calculate the token hash
-    const refreshTokenId = await generateTokenId(refreshToken);
+    const providedTokenHash = await generateTokenId(refreshToken);
 
     // Get the associated grant using userId in the key
     const grantKey = `grant:${userId}:${grantId}`;
@@ -875,8 +873,11 @@ export class OAuthProvider {
       );
     }
 
-    // Verify refresh token matches the one stored in the grant
-    if (grantData.refreshTokenId !== refreshTokenId) {
+    // Check if the provided token matches either the current or previous refresh token
+    const isCurrentToken = grantData.refreshTokenId === providedTokenHash;
+    const isPreviousToken = grantData.previousRefreshTokenId === providedTokenHash;
+    
+    if (!isCurrentToken && !isPreviousToken) {
       return createErrorResponse(
         'invalid_grant',
         'Invalid refresh token'
@@ -896,6 +897,11 @@ export class OAuthProvider {
     const newAccessToken = `${userId}:${grantId}:${accessTokenSecret}`;
     const accessTokenId = await generateTokenId(newAccessToken);
 
+    // Always issue a new refresh token with each use
+    const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
+    const newRefreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
+    const newRefreshTokenId = await generateTokenId(newRefreshToken);
+
     const now = Math.floor(Date.now() / 1000);
     const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
 
@@ -913,29 +919,21 @@ export class OAuthProvider {
       }
     };
 
-    // Handle refresh token rotation if strictOAuth21RefreshTokens is enabled
-    let newRefreshToken: string | undefined;
-    let refreshTokenResponse: any = {};
-    
-    if (this.options.strictOAuth21RefreshTokens) {
-      // Generate a new refresh token (OAuth 2.1 one-time use requirement)
-      const refreshTokenSecret = generateRandomString(TOKEN_LENGTH);
-      newRefreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
-      const newRefreshTokenId = await generateTokenId(newRefreshToken);
-      
-      // Update the grant with the new refresh token hash
+    // Update the grant with the token rotation information
+    if (isCurrentToken) {
+      // Current token was used - keep it as previous, set new as current
+      grantData.previousRefreshTokenId = grantData.refreshTokenId;
       grantData.refreshTokenId = newRefreshTokenId;
-      
-      // Include the new refresh token in the response
-      refreshTokenResponse = {
-        refresh_token: newRefreshToken
-      };
+    } else {
+      // Previous token was used - invalidate previous, keep current, set new as current
+      // Note: we're effectively deleting the previously-issued "new" token that wasn't
+      // used, while moving the current token to previous and the newly generated token to current
+      grantData.previousRefreshTokenId = grantData.refreshTokenId;
+      grantData.refreshTokenId = newRefreshTokenId;
     }
 
-    // Save updated grant if needed
-    if (this.options.strictOAuth21RefreshTokens) {
-      await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
-    }
+    // Save the updated grant
+    await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
@@ -944,13 +942,13 @@ export class OAuthProvider {
       { expirationTtl: this.options.accessTokenTTL }
     );
 
-    // Return the new access token (and refresh token if rotated)
+    // Return the new access token and refresh token
     return new Response(JSON.stringify({
       access_token: newAccessToken,
       token_type: 'bearer',
       expires_in: this.options.accessTokenTTL,
-      scope: grantData.scope.join(' '),
-      ...refreshTokenResponse
+      refresh_token: newRefreshToken,
+      scope: grantData.scope.join(' ')
     }), {
       headers: { 'Content-Type': 'application/json' }
     });

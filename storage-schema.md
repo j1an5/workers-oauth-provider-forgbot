@@ -95,6 +95,27 @@ Grant records store information about permissions a user has granted to an appli
 }
 ```
 
+**Content Example (after refresh token rotation):**
+```json
+{
+  "id": "xyz789",
+  "clientId": "abc123",
+  "userId": "user123",
+  "scope": ["document.read", "document.write"],
+  "metadata": {
+    "label": "My Files Access",
+    "deviceInfo": "Chrome on Windows"
+  },
+  "props": {
+    "userId": 123,
+    "username": "johndoe"
+  },
+  "createdAt": 1644256123,
+  "refreshTokenId": "7f2ab876c546a9e9f988ba7645af78239cfe980a4231ab38fcb895cb244a0a12",
+  "previousRefreshTokenId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8"
+}
+```
+
 **TTL:**
 - Initially 10 minutes (during authorization process)
 - No expiration after the authorization code is exchanged for tokens
@@ -185,7 +206,8 @@ Token records store metadata about issued access tokens, including denormalized 
 5. Access tokens expire automatically after their TTL.
 
 6. Refresh tokens do not expire and are stored directly in the grant; they remain valid until the grant is revoked.
-   - When the `strictOAuth21RefreshTokens` option is enabled, refresh tokens are one-time use, and a new refresh token is issued with each refresh grant.
+   - For security, the provider issues a new refresh token with each refresh operation and keeps track of both the current and previous tokens.
+   - When the new token is used, the previous token is invalidated, but older tokens can still be used until replaced.
 
 7. When a grant is revoked:
    - All associated access tokens are found using the key prefix `token:{userId}:{grantId}:` and deleted
