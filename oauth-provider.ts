@@ -1,5 +1,5 @@
 // my-oauth.ts
-import type { ExportedHandler } from '@cloudflare/workers-types';
+import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 
 // Types
 
@@ -480,7 +480,7 @@ export class OAuthProvider {
     if (!env.OAUTH_PROVIDER) {
       env.OAUTH_PROVIDER = this.createOAuthHelpers(env);
     }
-    
+
     // Default handler for all other requests
     return this.options.defaultHandler.fetch(request, env, ctx);
   }
@@ -1096,12 +1096,12 @@ export class OAuthProvider {
 
     // Set the grant props on the context object
     ctx.props = grantProps;
-    
+
     // Inject OAuth helpers into env if not already present
     if (!env.OAUTH_PROVIDER) {
       env.OAUTH_PROVIDER = this.createOAuthHelpers(env);
     }
-    
+
     // Call the API handler's fetch method with the props in ctx
     return this.options.apiHandler.fetch(
       request,
