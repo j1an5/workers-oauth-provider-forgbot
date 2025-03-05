@@ -677,7 +677,7 @@ export class OAuthProvider {
         'redirect_uri is required'
       );
     }
-    
+
     // OAuth 2.1 requires exact match for redirect URIs
     if (!clientInfo.redirectUris.includes(redirectUri)) {
       return createErrorResponse(
@@ -876,7 +876,7 @@ export class OAuthProvider {
     // Check if the provided token matches either the current or previous refresh token
     const isCurrentToken = grantData.refreshTokenId === providedTokenHash;
     const isPreviousToken = grantData.previousRefreshTokenId === providedTokenHash;
-    
+
     if (!isCurrentToken && !isPreviousToken) {
       return createErrorResponse(
         'invalid_grant',
@@ -920,17 +920,21 @@ export class OAuthProvider {
     };
 
     // Update the grant with the token rotation information
-    if (isCurrentToken) {
-      // Current token was used - keep it as previous, set new as current
-      grantData.previousRefreshTokenId = grantData.refreshTokenId;
-      grantData.refreshTokenId = newRefreshTokenId;
-    } else {
-      // Previous token was used - invalidate previous, keep current, set new as current
-      // Note: we're effectively deleting the previously-issued "new" token that wasn't
-      // used, while moving the current token to previous and the newly generated token to current
-      grantData.previousRefreshTokenId = grantData.refreshTokenId;
-      grantData.refreshTokenId = newRefreshTokenId;
-    }
+
+    // The token which the client used this time becomes the "previous" token, so that the client
+    // can always use the same token again next time. This might technically violate OAuth 2.1's
+    // requirement that refresh tokens be single-use. However, this requirement violates the laws
+    // of distributed systems. It's important that the client can always retry when a transient
+    // failure occurs. Under the strict requirement, if the failure occurred after the server
+    // rotated the token but before the client managed to store the updated token, then the client
+    // no longer has any valid refresh token and has effectively lost its grant. That's bad! So
+    // instead, we don't invalidate the old token until the client successfully uses a newer token.
+    // This provides most of the security benefits (tokens still rotate naturally) but without
+    // being inherently unreliable.
+    grantData.previousRefreshTokenId = providedTokenHash;
+
+    // The newly-generated token becomes the new "current" token.
+    grantData.refreshTokenId = newRefreshTokenId;
 
     // Save the updated grant
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
@@ -1266,7 +1270,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     const state = url.searchParams.get('state') || '';
     const codeChallenge = url.searchParams.get('code_challenge') || undefined;
     const codeChallengeMethod = url.searchParams.get('code_challenge_method') || 'plain';
-    
+
     // OAuth 2.1 does not support the implicit flow ('token' response type)
     if (responseType === 'token') {
       throw new Error('The implicit grant flow is not supported in OAuth 2.1');

@@ -160,3 +160,13 @@ See the interface definition for full API details.
 ## Written by Claude
 
 This library (including the schema documentation) was largely written by Claude, the AI model by Anthropic. Check out the commit history to see how Claude was prompted and what code it produced.
+
+## Implementation Notes
+
+### Single-use refresh tokens?
+
+OAuth 2.1 requires that refresh tokens are either "cryptographically bound" to the client, or are single-use. This library currently does not implement any cryptographic binding, thus seemingly requiring single-use tokens. Under this requirement, every token refresh request invalidates the old refresh token and issues a new one.
+
+This requirement is seemingly fundamentally flawed as it assumes that every refresh request will complete with no errors. In the real world, a transient network error, machine failure, or software fault could mean that the client fails to store the new refresh token after a refresh request. In this case, the client would be permanently unable to make any further requests, as the only token it has is no longer valid.
+
+This library implements a compromise: At any particular time, a grant may have two valid refresh tokens. When the client uses one of them, the other one is invalidated, and a new one is generated and returned. Thus, if the client correctly uses the new refresh token each time, then older refresh tokens are continuously invalidated. But if a transient failure prevents the client from updating its token, it can always retry the request with the token it used previously.
