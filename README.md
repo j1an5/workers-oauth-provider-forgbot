@@ -62,7 +62,7 @@ export default new OAuthProvider({
 async function fetchDefault(request: Request, env, ctx, oauth: OAuthHelpers) {
   let url = new URL(request.url);
 
-  if (url.pathname == "/oauth/register") {
+  if (url.pathname == "/authorize") {
     // This is a request for our OAuth authorization flow UI. It is up to the application to
     // implement this. However, the OAuthProvider library provides some helpers to assist.
 
