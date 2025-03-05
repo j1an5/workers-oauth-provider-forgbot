@@ -2,6 +2,9 @@
 import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
+// Symbol used for internal method access (not exported)
+const GET_CLIENT = Symbol('getClient');
+
 // Types
 
 /**
@@ -757,7 +760,7 @@ export class OAuthProvider {
     }
 
     // Verify client
-    const clientInfo = await this.getClient(env, clientId);
+    const clientInfo = await this[GET_CLIENT](env, clientId);
     if (!clientInfo) {
       return createErrorResponse(
         'invalid_client',
@@ -1284,11 +1287,12 @@ export class OAuthProvider {
 
   /**
    * Fetches client information from KV storage
+   * This method is internal and only accessible via the GET_CLIENT symbol
    * @param env - Cloudflare Worker environment variables
    * @param clientId - The client ID to look up
    * @returns The client information, or null if not found
    */
-  getClient(env: any, clientId: string): Promise<ClientInfo | null> {
+  [GET_CLIENT](env: any, clientId: string): Promise<ClientInfo | null> {
     const clientKey = `client:${clientId}`;
     return env.OAUTH_KV.get(clientKey, { type: 'json' });
   }
@@ -1447,7 +1451,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
    * @returns A Promise resolving to the client info, or null if not found
    */
   async lookupClient(clientId: string): Promise<ClientInfo | null> {
-    return await this.provider.getClient(this.env, clientId);
+    return await this.provider[GET_CLIENT](this.env, clientId);
   }
 
   /**
