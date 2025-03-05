@@ -1,4 +1,5 @@
 // my-oauth.ts
+import type { ExportedHandler } from '@cloudflare/workers-types';
 
 // Types
 
@@ -13,15 +14,15 @@ export interface OAuthProviderOptions {
   apiRoute: string;
 
   /**
-   * Handler function for API requests that have a valid access token.
-   * This function receives the authenticated user properties along with the request.
+   * Handler for API requests that have a valid access token.
+   * This handler will receive the authenticated user properties in ctx.props.
    */
-  apiHandler: ApiHandler;
+  apiHandler: ExportedHandler;
 
   /**
-   * Handler function for all non-API requests or API requests without a valid token.
+   * Handler for all non-API requests or API requests without a valid token.
    */
-  defaultHandler: DefaultHandler;
+  defaultHandler: ExportedHandler;
 
   /**
    * URL of the OAuth authorization endpoint where users can grant permissions.
@@ -48,35 +49,9 @@ export interface OAuthProviderOptions {
   accessTokenTTL?: number;
 }
 
-/**
- * Handler object type for authenticated API requests
- * Contains a fetch method that processes authenticated API requests
- */
-export interface ApiHandler {
-  /**
-   * Fetch handler for authenticated API requests
-   * @param request - The original HTTP request
-   * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
-   * @param ctx - Cloudflare Worker execution context with ctx.props for user properties
-   * @returns A Promise resolving to an HTTP Response
-   */
-  fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
-}
-
-/**
- * Handler object type for non-API or unauthenticated requests
- * Contains a fetch method that processes default requests
- */
-export interface DefaultHandler {
-  /**
-   * Fetch handler for non-API or unauthenticated requests
-   * @param request - The original HTTP request
-   * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
-   * @param ctx - Cloudflare Worker execution context
-   * @returns A Promise resolving to an HTTP Response
-   */
-  fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
-}
+// Using ExportedHandler from Cloudflare Workers Types for both API and default handlers
+// This is Cloudflare's built-in type for Workers handlers with a fetch method
+// For ApiHandler, ctx will include ctx.props with user properties
 
 /**
  * Helper methods for OAuth operations provided to handler functions

@@ -16,7 +16,8 @@ This is a TypeScript library that implements the provider side of the OAuth 2.1 
 A Worker that uses the library might look like this:
 
 ```ts
-import { OAuthProvider, OAuthHelpers } from "my-oauth";
+import { OAuthProvider } from "my-oauth";
+import type { ExportedHandler } from "@cloudflare/workers-types";
 
 // We export the OAuthProvider instance as the entrypoint to our Worker. This means it
 // implements the `fetch()` handler, receiving all HTTP requests.
