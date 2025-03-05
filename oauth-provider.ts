@@ -325,11 +325,8 @@ export interface Grant {
    */
   encryptionIv: string;
 
-  /**
-   * JWK representation of the symmetric encryption key
-   * This serves as a backup of the encryption key in case all tokens are lost
-   */
-  encryptionKeyJwk: JsonWebKey;
+  // No backup of the encryption key is stored
+  // This ensures true end-to-end encryption where only token holders can decrypt
 
   /**
    * Unix timestamp when the grant was created
@@ -1164,8 +1161,8 @@ export class OAuthProvider {
     } else if (isPreviousToken && grantData.previousRefreshTokenWrappedKey) {
       wrappedKeyToUse = grantData.previousRefreshTokenWrappedKey;
     } else {
-      // Fallback to the backup JWK key if wrapped keys aren't available
-      // This should not normally happen but provides a recovery mechanism
+      // No backup key is available - this is true end-to-end encryption
+      // Only token holders can decrypt the data
       return createErrorResponse(
         'server_error',
         'Encrypted key unavailable for this token'
@@ -1817,8 +1814,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Encrypt the props data
     const { encryptedData, iv } = await encryptProps(encryptionKey, options.props);
     
-    // Export the encryption key as JWK for backup storage
-    const encryptionKeyJwk = await exportCryptoKeyToJwk(encryptionKey);
+    // No backup of the encryption key - only token holders will be able to decrypt
     
     // Wrap the encryption key with the auth code
     const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
@@ -1832,7 +1828,6 @@ class OAuthHelpersImpl implements OAuthHelpers {
       metadata: options.metadata,
       encryptedProps: encryptedData,
       encryptionIv: iv,
-      encryptionKeyJwk: encryptionKeyJwk,
       createdAt: Math.floor(Date.now() / 1000),
       authCodeId: authCodeId, // Store the auth code hash in the grant
       authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key

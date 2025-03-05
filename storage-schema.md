@@ -68,12 +68,6 @@ Grant records store information about permissions a user has granted to an appli
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
   "encryptionIv": "base64-encoded initialization vector",
-  "encryptionKeyJwk": {
-    "kty": "oct",
-    "k": "base64-encoded key material",
-    "alg": "A256GCM",
-    "ext": true
-  },
   "createdAt": 1644256123,
   "authCodeId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
   "authCodeWrappedKey": "base64-encoded wrapped encryption key",
@@ -95,12 +89,6 @@ Grant records store information about permissions a user has granted to an appli
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
   "encryptionIv": "base64-encoded initialization vector",
-  "encryptionKeyJwk": {
-    "kty": "oct",
-    "k": "base64-encoded key material",
-    "alg": "A256GCM",
-    "ext": true
-  },
   "createdAt": 1644256123,
   "refreshTokenId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
   "refreshTokenWrappedKey": "base64-encoded wrapped encryption key"
@@ -120,12 +108,6 @@ Grant records store information about permissions a user has granted to an appli
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
   "encryptionIv": "base64-encoded initialization vector",
-  "encryptionKeyJwk": {
-    "kty": "oct",
-    "k": "base64-encoded key material",
-    "alg": "A256GCM",
-    "ext": true
-  },
   "createdAt": 1644256123,
   "refreshTokenId": "7f2ab876c546a9e9f988ba7645af78239cfe980a4231ab38fcb895cb244a0a12",
   "refreshTokenWrappedKey": "base64-encoded wrapped encryption key",
@@ -183,8 +165,8 @@ Token records store metadata about issued access tokens, including denormalized 
    - Each grant has its own unique AES-256 key for encrypting props
    - The encryption key is wrapped (encrypted) using each token as key material
    - The wrapped key can only be unwrapped by someone with the actual token
+   - No backup of the encryption key is stored anywhere
    - Even system administrators cannot decrypt the props without a valid token
-   - A backup of the encryption key is stored in JWK format as a recovery mechanism
 
 3. **Key Wrapping Security**:
    - Token wrapping keys are derived using HMAC-SHA256 with a static key
@@ -222,7 +204,6 @@ Token records store metadata about issued access tokens, including denormalized 
    - The `props` data is encrypted using this key with AES-GCM
    - The encryption key is wrapped using the authorization code
    - The wrapped key is stored in `authCodeWrappedKey`
-   - A backup of the encryption key in JWK format is stored
    - A 10-minute TTL on the grant record
 
 3. The client exchanges the authorization code for tokens:
