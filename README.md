@@ -18,6 +18,7 @@ A Worker that uses the library might look like this:
 ```ts
 import { OAuthProvider } from "my-oauth";
 import type { ExportedHandler } from "@cloudflare/workers-types";
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 // We export the OAuthProvider instance as the entrypoint to our Worker. This means it
 // implements the `fetch()` handler, receiving all HTTP requests.
@@ -29,10 +30,13 @@ export default new OAuthProvider({
 
   // When the OAuth system receives an API request with a valid access token, it passes the request
   // to this handler object's fetch method.
-  apiHandler: apiHandler,
+  // You can provide either an object with a fetch method (ExportedHandler)
+  // or a class extending WorkerEntrypoint.
+  apiHandler: apiHandler, // Using an object with a fetch method
 
   // Any requests which aren't API request will be passed to the default handler instead.
-  defaultHandler: defaultHandler,
+  // Here we use a class extending WorkerEntrypoint as an alternative approach.
+  defaultHandler: DefaultWorker, // Using a WorkerEntrypoint class
 
   // This specifies the URL of the OAuth authorization flow UI. This UI is NOT implemented by
   // the OAuthProvider. It is up to the application to implement a UI here. The only reason why
@@ -151,6 +155,31 @@ const apiHandler = {
     return new Response("Not found", {status: 404});
   }
 };
+
+// Example of a WorkerEntrypoint class that can be used as a handler.
+// This approach is equivalent to the object-with-fetch approach but follows
+// the newer Cloudflare Workers pattern.
+class DefaultWorker extends WorkerEntrypoint {
+  // A constructor for initialization (the OAuth Provider will pass ctx and env to this)
+  constructor(ctx: ExecutionContext, env: any) {
+    // Pass ctx and env to the superclass constructor
+    super(ctx, env);
+    // You can do additional initialization here if needed
+  }
+
+  // The fetch handler method - this gets passed only the request
+  async fetch(request: Request): Promise<Response> {
+    let url = new URL(request.url);
+
+    if (url.pathname == "/authorize") {
+      // Implementation of the auth flow UI would go here,
+      // using env.OAUTH_PROVIDER to access OAuth helpers
+      // ...
+    }
+
+    return new Response("Not found", {status: 404});
+  }
+}
 ```
 
 This implementation requires that your worker is configured with a Workers KV namespace binding called `OAUTH_KV`, which is used to store token information. See the file `storage-schema.md` for details on the schema of this namespace.
