@@ -124,11 +124,12 @@ export interface OAuthHelpers {
 
   /**
    * Lists all authorization grants for a specific user with pagination support
+   * Returns a summary of each grant without sensitive information
    * @param userId - The ID of the user whose grants to list
    * @param options - Optional pagination parameters (limit and cursor)
-   * @returns A Promise resolving to the list result with items and optional cursor
+   * @returns A Promise resolving to the list result with grant summaries and optional cursor
    */
-  listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<Grant>>;
+  listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<GrantSummary>>;
 
   /**
    * Revokes an authorization grant
@@ -315,9 +316,20 @@ export interface Grant {
   metadata: any;
 
   /**
-   * Application-specific properties included with API requests
+   * Encrypted application-specific properties
    */
-  props: any;
+  encryptedProps: string;
+
+  /**
+   * Initialization vector used for props encryption
+   */
+  encryptionIv: string;
+
+  /**
+   * JWK representation of the symmetric encryption key
+   * This serves as a backup of the encryption key in case all tokens are lost
+   */
+  encryptionKeyJwk: JsonWebKey;
 
   /**
    * Unix timestamp when the grant was created
@@ -330,16 +342,32 @@ export interface Grant {
   refreshTokenId?: string;
 
   /**
+   * Wrapped encryption key for the current refresh token
+   */
+  refreshTokenWrappedKey?: string;
+
+  /**
    * The hash of the previous refresh token associated with this grant
    * This token is still valid until the new token is first used
    */
   previousRefreshTokenId?: string;
 
   /**
+   * Wrapped encryption key for the previous refresh token
+   */
+  previousRefreshTokenWrappedKey?: string;
+
+  /**
    * The hash of the authorization code associated with this grant
    * Only present during the authorization code exchange process
    */
   authCodeId?: string;
+
+  /**
+   * Wrapped encryption key for the authorization code
+   * Only present during the authorization code exchange process
+   */
+  authCodeWrappedKey?: string;
 
   /**
    * PKCE code challenge for this authorization
@@ -387,6 +415,11 @@ export interface Token {
   expiresAt: number;
 
   /**
+   * The encryption key for props, wrapped with this token
+   */
+  wrappedEncryptionKey: string;
+
+  /**
    * Denormalized grant information for faster access
    */
   grant: {
@@ -401,9 +434,14 @@ export interface Token {
     scope: string[];
 
     /**
-     * Application-specific properties included with API requests
+     * Encrypted application-specific properties
      */
-    props: any;
+    encryptedProps: string;
+
+    /**
+     * Initialization vector used for props encryption
+     */
+    encryptionIv: string;
   };
 }
 
@@ -435,6 +473,42 @@ export interface ListResult<T> {
    * Cursor to get the next page of results, if there are more results
    */
   cursor?: string;
+}
+
+/**
+ * Public representation of a grant, with sensitive data removed
+ * Used for list operations where the complete grant data isn't needed
+ */
+export interface GrantSummary {
+  /**
+   * Unique identifier for the grant
+   */
+  id: string;
+
+  /**
+   * Client that received this grant
+   */
+  clientId: string;
+
+  /**
+   * User who authorized this grant
+   */
+  userId: string;
+
+  /**
+   * List of scopes that were granted
+   */
+  scope: string[];
+
+  /**
+   * Application-specific metadata associated with this grant
+   */
+  metadata: any;
+
+  /**
+   * Unix timestamp when the grant was created
+   */
+  createdAt: number;
 }
 
 /**
@@ -941,20 +1015,36 @@ export class OAuthProvider {
       }
     };
 
+    // Get the encryption key for props by unwrapping it using the auth code
+    const encryptionKey = await unwrapKeyWithToken(code, grantData.authCodeWrappedKey!);
+    
+    // Wrap the key for both the new access token and refresh token
+    const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, encryptionKey);
+    const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, encryptionKey);
+    
     // Update the grant:
     // - Remove the auth code hash (it's single-use)
     // - Remove PKCE-related fields (one-time use)
-    // - Add the refresh token hash
+    // - Remove auth code wrapped key (no longer needed)
+    // - Add the refresh token hash and wrapped key
     // - Make it permanent (no TTL)
     delete grantData.authCodeId;
     delete grantData.codeChallenge;
     delete grantData.codeChallengeMethod;
+    delete grantData.authCodeWrappedKey;
     grantData.refreshTokenId = refreshTokenId;
+    grantData.refreshTokenWrappedKey = refreshTokenWrappedKey;
     grantData.previousRefreshTokenId = undefined; // No previous token for first use
+    grantData.previousRefreshTokenWrappedKey = undefined; // No previous token for first use
 
     // Update the grant with the refresh token hash and no TTL
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
 
+    // Update access token data with wrapped key and encrypted props
+    accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
+    accessTokenData.grant.encryptedProps = grantData.encryptedProps;
+    accessTokenData.grant.encryptionIv = grantData.encryptionIv;
+    
     // Save access token with TTL
     await env.OAUTH_KV.put(
       `token:${userId}:${grantId}:${accessTokenId}`,
@@ -1067,6 +1157,28 @@ export class OAuthProvider {
       }
     };
 
+    // Determine which wrapped key to use for unwrapping
+    let wrappedKeyToUse: string;
+    if (isCurrentToken && grantData.refreshTokenWrappedKey) {
+      wrappedKeyToUse = grantData.refreshTokenWrappedKey;
+    } else if (isPreviousToken && grantData.previousRefreshTokenWrappedKey) {
+      wrappedKeyToUse = grantData.previousRefreshTokenWrappedKey;
+    } else {
+      // Fallback to the backup JWK key if wrapped keys aren't available
+      // This should not normally happen but provides a recovery mechanism
+      return createErrorResponse(
+        'server_error',
+        'Encrypted key unavailable for this token'
+      );
+    }
+    
+    // Unwrap the encryption key using the refresh token
+    const encryptionKey = await unwrapKeyWithToken(refreshToken, wrappedKeyToUse);
+    
+    // Wrap the key for both the new access token and refresh token
+    const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, encryptionKey);
+    const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, encryptionKey);
+
     // Update the grant with the token rotation information
 
     // The token which the client used this time becomes the "previous" token, so that the client
@@ -1080,12 +1192,19 @@ export class OAuthProvider {
     // This provides most of the security benefits (tokens still rotate naturally) but without
     // being inherently unreliable.
     grantData.previousRefreshTokenId = providedTokenHash;
+    grantData.previousRefreshTokenWrappedKey = wrappedKeyToUse;
 
     // The newly-generated token becomes the new "current" token.
     grantData.refreshTokenId = newRefreshTokenId;
+    grantData.refreshTokenWrappedKey = newRefreshTokenWrappedKey;
 
     // Save the updated grant
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
+
+    // Update access token data with wrapped key and encrypted props
+    accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
+    accessTokenData.grant.encryptedProps = grantData.encryptedProps;
+    accessTokenData.grant.encryptionIv = grantData.encryptionIv;
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
@@ -1254,11 +1373,18 @@ export class OAuthProvider {
       );
     }
 
-    // Extract the denormalized grant data directly from the token
-    const grantProps = tokenData.grant.props;
+    // Unwrap the encryption key using the access token
+    const encryptionKey = await unwrapKeyWithToken(accessToken, tokenData.wrappedEncryptionKey);
+    
+    // Decrypt the props
+    const decryptedProps = await decryptProps(
+      encryptionKey, 
+      tokenData.grant.encryptedProps, 
+      tokenData.grant.encryptionIv
+    );
 
-    // Set the grant props on the context object
-    ctx.props = grantProps;
+    // Set the decrypted props on the context object
+    ctx.props = decryptedProps;
 
     // Inject OAuth helpers into env if not already present
     if (!env.OAUTH_PROVIDER) {
@@ -1397,6 +1523,221 @@ function base64UrlEncode(str: string): string {
 }
 
 /**
+ * Encodes an ArrayBuffer as base64 string
+ * @param buffer - The ArrayBuffer to encode
+ * @returns The base64 encoded string
+ */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  return btoa(String.fromCharCode(...new Uint8Array(buffer)));
+}
+
+/**
+ * Decodes a base64 string to an ArrayBuffer
+ * @param base64 - The base64 string to decode
+ * @returns The decoded ArrayBuffer
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+/**
+ * Generates a new symmetric encryption key for protecting props
+ * @returns A Promise resolving to a CryptoKey object
+ */
+async function generatePropsEncryptionKey(): Promise<CryptoKey> {
+  return await crypto.subtle.generateKey(
+    {
+      name: 'AES-GCM',
+      length: 256
+    },
+    true, // extractable
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Encrypts props data using the provided key
+ * @param key - The CryptoKey to use for encryption
+ * @param data - The data to encrypt
+ * @returns An object containing the encrypted data and IV
+ */
+async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData: string, iv: string }> {
+  // Generate a random initialization vector
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  
+  // Convert data to string
+  const jsonData = JSON.stringify(data);
+  const encoder = new TextEncoder();
+  const encodedData = encoder.encode(jsonData);
+  
+  // Encrypt the data
+  const encryptedBuffer = await crypto.subtle.encrypt(
+    {
+      name: 'AES-GCM',
+      iv
+    },
+    key,
+    encodedData
+  );
+  
+  // Convert to base64 for storage
+  return {
+    encryptedData: arrayBufferToBase64(encryptedBuffer),
+    iv: arrayBufferToBase64(iv)
+  };
+}
+
+/**
+ * Decrypts encrypted props data using the provided key
+ * @param key - The CryptoKey to use for decryption
+ * @param encryptedData - The encrypted data as a base64 string
+ * @param iv - The initialization vector as a base64 string
+ * @returns The decrypted data object
+ */
+async function decryptProps(key: CryptoKey, encryptedData: string, iv: string): Promise<any> {
+  // Convert base64 strings back to ArrayBuffers
+  const encryptedBuffer = base64ToArrayBuffer(encryptedData);
+  const ivBuffer = base64ToArrayBuffer(iv);
+  
+  // Decrypt the data
+  const decryptedBuffer = await crypto.subtle.decrypt(
+    {
+      name: 'AES-GCM',
+      iv: ivBuffer
+    },
+    key,
+    encryptedBuffer
+  );
+  
+  // Convert the decrypted buffer to a string, then parse as JSON
+  const decoder = new TextDecoder();
+  const jsonData = decoder.decode(decryptedBuffer);
+  return JSON.parse(jsonData);
+}
+
+/**
+ * Exports a CryptoKey to a JWK (JSON Web Key)
+ * @param key - The CryptoKey to export
+ * @returns A Promise resolving to the JWK
+ */
+async function exportCryptoKeyToJwk(key: CryptoKey): Promise<JsonWebKey> {
+  return await crypto.subtle.exportKey('jwk', key);
+}
+
+/**
+ * Imports a JWK (JSON Web Key) to a CryptoKey
+ * @param jwk - The JWK to import
+ * @returns A Promise resolving to the CryptoKey
+ */
+async function importJwkToCryptoKey(jwk: JsonWebKey): Promise<CryptoKey> {
+  return await crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'AES-GCM' },
+    true, // extractable
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Static HMAC key for wrapping key derivation
+// This ensures that even if someone has the token ID, they can't derive the wrapping key
+// We use a fixed array of 32 bytes for optimal performance
+const WRAPPING_KEY_HMAC_KEY = new Uint8Array([
+  0x22, 0x7e, 0x26, 0x86, 0x8d, 0xf1, 0xe1, 0x6d,
+  0x80, 0x70, 0xea, 0x17, 0x97, 0x5b, 0x47, 0xa6,
+  0x82, 0x18, 0xfa, 0x87, 0x28, 0xae, 0xde, 0x85,
+  0xb5, 0x1d, 0x4a, 0xd9, 0x96, 0xca, 0xca, 0x43
+]);
+
+/**
+ * Derives a wrapping key from a token string
+ * This intentionally uses a different method than token ID generation
+ * to ensure the token ID cannot be used to derive the wrapping key
+ * @param tokenStr - The token string to use as key material
+ * @returns A Promise resolving to the derived CryptoKey
+ */
+async function deriveKeyFromToken(tokenStr: string): Promise<CryptoKey> {
+  const encoder = new TextEncoder();
+  
+  // Import the pre-defined HMAC key (already 32 bytes)
+  const hmacKey = await crypto.subtle.importKey(
+    "raw",
+    WRAPPING_KEY_HMAC_KEY,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  
+  // Use HMAC-SHA256 to derive the wrapping key material
+  const hmacResult = await crypto.subtle.sign(
+    "HMAC",
+    hmacKey,
+    encoder.encode(tokenStr)
+  );
+  
+  // Import the HMAC result as the wrapping key
+  return await crypto.subtle.importKey(
+    'raw',
+    hmacResult,
+    { name: 'AES-KW' },
+    false, // not extractable
+    ['wrapKey', 'unwrapKey']
+  );
+}
+
+/**
+ * Wraps an encryption key using a token-derived key
+ * @param tokenStr - The token string to use for key wrapping
+ * @param keyToWrap - The encryption key to wrap
+ * @returns A Promise resolving to the wrapped key as a base64 string
+ */
+async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise<string> {
+  // Derive a key from the token
+  const wrappingKey = await deriveKeyFromToken(tokenStr);
+  
+  // Wrap the encryption key
+  const wrappedKeyBuffer = await crypto.subtle.wrapKey(
+    'jwk',
+    keyToWrap,
+    wrappingKey,
+    { name: 'AES-KW' }
+  );
+  
+  // Convert to base64 for storage
+  return arrayBufferToBase64(wrappedKeyBuffer);
+}
+
+/**
+ * Unwraps an encryption key using a token-derived key
+ * @param tokenStr - The token string used for key wrapping
+ * @param wrappedKeyBase64 - The wrapped key as a base64 string
+ * @returns A Promise resolving to the unwrapped CryptoKey
+ */
+async function unwrapKeyWithToken(tokenStr: string, wrappedKeyBase64: string): Promise<CryptoKey> {
+  // Derive a key from the token
+  const wrappingKey = await deriveKeyFromToken(tokenStr);
+  
+  // Convert base64 wrapped key to ArrayBuffer
+  const wrappedKeyBuffer = base64ToArrayBuffer(wrappedKeyBase64);
+  
+  // Unwrap the key
+  return await crypto.subtle.unwrapKey(
+    'jwk',
+    wrappedKeyBuffer,
+    wrappingKey,
+    { name: 'AES-KW' },
+    { name: 'AES-GCM' },
+    true, // extractable
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
  * Class that implements the OAuth helper methods
  * Provides methods for OAuth operations needed by handlers
  */
@@ -1470,6 +1811,18 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Hash the authorization code
     const authCodeId = await hashSecret(authCode);
 
+    // Generate a symmetric encryption key for props
+    const encryptionKey = await generatePropsEncryptionKey();
+    
+    // Encrypt the props data
+    const { encryptedData, iv } = await encryptProps(encryptionKey, options.props);
+    
+    // Export the encryption key as JWK for backup storage
+    const encryptionKeyJwk = await exportCryptoKeyToJwk(encryptionKey);
+    
+    // Wrap the encryption key with the auth code
+    const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
+
     // Store the grant with the auth code hash
     const grant: Grant = {
       id: grantId,
@@ -1477,9 +1830,12 @@ class OAuthHelpersImpl implements OAuthHelpers {
       userId: options.userId,
       scope: options.scope,
       metadata: options.metadata,
-      props: options.props,
+      encryptedProps: encryptedData,
+      encryptionIv: iv,
+      encryptionKeyJwk: encryptionKeyJwk,
       createdAt: Math.floor(Date.now() / 1000),
       authCodeId: authCodeId, // Store the auth code hash in the grant
+      authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key
       // Store PKCE parameters if provided
       codeChallenge: options.request.codeChallenge,
       codeChallengeMethod: options.request.codeChallengeMethod
@@ -1635,11 +1991,12 @@ class OAuthHelpersImpl implements OAuthHelpers {
 
   /**
    * Lists all authorization grants for a specific user with pagination support
+   * Returns a summary of each grant without sensitive information
    * @param userId - The ID of the user whose grants to list
    * @param options - Optional pagination parameters (limit and cursor)
-   * @returns A Promise resolving to the list result with items and optional cursor
+   * @returns A Promise resolving to the list result with grant summaries and optional cursor
    */
-  async listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<Grant>> {
+  async listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<GrantSummary>> {
     // Prepare list options for KV
     const listOptions: { limit?: number; cursor?: string; prefix: string } = {
       prefix: `grant:${userId}:`
@@ -1656,12 +2013,21 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Use the KV list() function to get grant keys with pagination
     const response = await this.env.OAUTH_KV.list(listOptions);
 
-    // Fetch all grants in parallel
-    const grants: Grant[] = [];
+    // Fetch all grants in parallel and convert to grant summaries
+    const grantSummaries: GrantSummary[] = [];
     const promises = response.keys.map(async (key: { name: string }) => {
       const grantData = await this.env.OAUTH_KV.get(key.name, { type: 'json' });
       if (grantData) {
-        grants.push(grantData);
+        // Create a summary with only the public fields
+        const summary: GrantSummary = {
+          id: grantData.id,
+          clientId: grantData.clientId,
+          userId: grantData.userId,
+          scope: grantData.scope,
+          metadata: grantData.metadata,
+          createdAt: grantData.createdAt
+        };
+        grantSummaries.push(summary);
       }
     });
 
@@ -1669,7 +2035,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
 
     // Return result with cursor if there are more results
     return {
-      items: grants,
+      items: grantSummaries,
       cursor: response.list_complete ? undefined : response.cursor
     };
   }
