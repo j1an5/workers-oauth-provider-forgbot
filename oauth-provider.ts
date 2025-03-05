@@ -17,10 +17,11 @@ enum HandlerType {
  */
 export interface OAuthProviderOptions {
   /**
-   * Base URL for API routes. Requests with URLs starting with this prefix
+   * URL(s) for API routes. Requests with URLs starting with any of these prefixes
    * will be treated as API requests and require a valid access token.
+   * Can be a single route or an array of routes. Each route can be a full URL or just a path.
    */
-  apiRoute: string;
+  apiRoute: string | string[];
 
   /**
    * Handler for API requests that have a valid access token.
@@ -460,7 +461,13 @@ export class OAuthProvider {
     this.defaultHandlerType = this.validateHandler(options.defaultHandler, 'defaultHandler');
 
     // Validate that the endpoints are either absolute paths or full URLs
-    this.validateEndpoint(options.apiRoute, 'apiRoute');
+    if (Array.isArray(options.apiRoute)) {
+      options.apiRoute.forEach((route, index) => {
+        this.validateEndpoint(route, `apiRoute[${index}]`);
+      });
+    } else {
+      this.validateEndpoint(options.apiRoute, 'apiRoute');
+    }
     this.validateEndpoint(options.authorizeEndpoint, 'authorizeEndpoint');
     this.validateEndpoint(options.tokenEndpoint, 'tokenEndpoint');
     if (options.clientRegistrationEndpoint) {
@@ -610,18 +617,35 @@ export class OAuthProvider {
   }
 
   /**
-   * Checks if a URL is an API request based on the configured API route
+   * Checks if a URL matches a specific API route
    * @param url - The URL to check
-   * @returns True if the URL is an API request
+   * @param route - The API route to check against
+   * @returns True if the URL matches the API route
    */
-  private isApiRequest(url: URL): boolean {
-    if (this.isPath(this.options.apiRoute)) {
+  private matchApiRoute(url: URL, route: string): boolean {
+    if (this.isPath(route)) {
       // It's a path - match only the pathname
-      return url.pathname.startsWith(this.options.apiRoute);
+      return url.pathname.startsWith(route);
     } else {
       // It's a full URL - match the entire URL including hostname
-      const apiUrl = new URL(this.options.apiRoute);
+      const apiUrl = new URL(route);
       return url.hostname === apiUrl.hostname && url.pathname.startsWith(apiUrl.pathname);
+    }
+  }
+  
+  /**
+   * Checks if a URL is an API request based on the configured API route(s)
+   * @param url - The URL to check
+   * @returns True if the URL matches any of the API routes
+   */
+  private isApiRequest(url: URL): boolean {
+    // Handle array of routes
+    if (Array.isArray(this.options.apiRoute)) {
+      // Return true if any route matches
+      return this.options.apiRoute.some(route => this.matchApiRoute(url, route));
+    } else {
+      // Handle single route
+      return this.matchApiRoute(url, this.options.apiRoute);
     }
   }
 

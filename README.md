@@ -23,12 +23,16 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 // We export the OAuthProvider instance as the entrypoint to our Worker. This means it
 // implements the `fetch()` handler, receiving all HTTP requests.
 export default new OAuthProvider({
-  // Configure my API route. Any requests whose URL starts with this will be considered to be
-  // API requests. The OAuth provider will check the access token on these requests, and then,
-  // if the token is valid, send the request to the API handler.
-  // You can provide either a full URL (which will match the hostname) or just a path
-  // (which will match any hostname).
-  apiRoute: "/api/", // Using just a path - will match any hostname
+  // Configure API routes. Any requests whose URL starts with any of these prefixes will be
+  // considered API requests. The OAuth provider will check the access token on these requests,
+  // and then, if the token is valid, send the request to the API handler.
+  // You can provide:
+  // - A single route (string) or multiple routes (array)
+  // - Full URLs (which will match the hostname) or just paths (which will match any hostname)
+  apiRoute: [
+    "/api/", // Path only - will match any hostname
+    "https://api.example.com/" // Full URL - will check hostname
+  ],
 
   // When the OAuth system receives an API request with a valid access token, it passes the request
   // to this handler object's fetch method.
