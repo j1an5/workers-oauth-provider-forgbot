@@ -51,25 +51,23 @@ export interface OAuthProviderOptions {
 /**
  * Handler function type for authenticated API requests
  * @param request - The original HTTP request
- * @param env - Cloudflare Worker environment variables
+ * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
  * @param ctx - Cloudflare Worker execution context with ctx.props for user properties
- * @param oauth - Helper methods for OAuth operations
  * @returns A Promise resolving to an HTTP Response
  */
 export interface ApiHandler {
-  (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers): Promise<Response>;
+  (request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
 }
 
 /**
  * Handler function type for non-API or unauthenticated requests
  * @param request - The original HTTP request
- * @param env - Cloudflare Worker environment variables
+ * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
  * @param ctx - Cloudflare Worker execution context
- * @param oauth - Helper methods for OAuth operations
  * @returns A Promise resolving to an HTTP Response
  */
 export interface DefaultHandler {
-  (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers): Promise<Response>;
+  (request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
 }
 
 /**
@@ -495,8 +493,13 @@ export class OAuthProvider {
       return this.handleApiRequest(request, env, ctx);
     }
 
+    // Inject OAuth helpers into env if not already present
+    if (!env.OAUTH_PROVIDER) {
+      env.OAUTH_PROVIDER = this.createOAuthHelpers(env);
+    }
+    
     // Default handler for all other requests
-    return this.options.defaultHandler(request, env, ctx, this.createOAuthHelpers(env));
+    return this.options.defaultHandler(request, env, ctx);
   }
 
   /**
@@ -1111,12 +1114,16 @@ export class OAuthProvider {
     // Set the grant props on the context object
     ctx.props = grantProps;
     
+    // Inject OAuth helpers into env if not already present
+    if (!env.OAUTH_PROVIDER) {
+      env.OAUTH_PROVIDER = this.createOAuthHelpers(env);
+    }
+    
     // Call the API handler with the props in ctx
     return this.options.apiHandler(
       request,
       env,
-      ctx,
-      this.createOAuthHelpers(env)
+      ctx
     );
   }
   /**

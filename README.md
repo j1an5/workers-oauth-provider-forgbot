@@ -57,31 +57,31 @@ export default new OAuthProvider({
 // handler, and are exactly the objects that the `OAuthProvider` itself received from the Workers
 // runtime.
 //
-// The `oauth` parameter provides an API by which the application can call back to the
+// The `env.OAUTH_PROVIDER` provides an API by which the application can call back to the
 // OAuthProvider.
-async function fetchDefault(request: Request, env, ctx, oauth: OAuthHelpers) {
+async function fetchDefault(request: Request, env, ctx) {
   let url = new URL(request.url);
 
   if (url.pathname == "/authorize") {
     // This is a request for our OAuth authorization flow UI. It is up to the application to
     // implement this. However, the OAuthProvider library provides some helpers to assist.
 
-    // `oauth.parseAuthRequest()` parses the OAuth authorization request to extract the parameters
+    // `env.OAUTH_PROVIDER.parseAuthRequest()` parses the OAuth authorization request to extract the parameters
     // required by the OAuth 2 standard, namely response_type, client_id, redirect_uri, scope, and
     // state. It returns an object containing all these (using idiomatic camelCase naming).
-    let oauthReqInfo = oauth.parseAuthRequest(request);
+    let oauthReqInfo = env.OAUTH_PROVIDER.parseAuthRequest(request);
 
-    // `oauth.lookupClient()` looks up metadata about the client, as definetd by RFC-7591. This
+    // `env.OAUTH_PROVIDER.lookupClient()` looks up metadata about the client, as definetd by RFC-7591. This
     // includes things like redirect_uris, client_name, logo_uri, etc.
-    let clientInfo = await oauth.lookupClient(oauthReqInfo.clientId);
+    let clientInfo = await env.OAUTH_PROVIDER.lookupClient(oauthReqInfo.clientId);
 
     // At this point, the application should use `oauthReqInfo` and `clientInfo` to render an
     // authorization consent UI to the user. The details of this are up to the app so are not
     // shown here.
 
-    // After the user has granted consent, the application calls `oauth.completeAuthorization()` to
+    // After the user has granted consent, the application calls `env.OAUTH_PROVIDER.completeAuthorization()` to
     // grant the authorization.
-    let {redirectTo} = oauth.completeAuthorization({
+    let {redirectTo} = await env.OAUTH_PROVIDER.completeAuthorization({
       // The application passes back the original OAuth request info that was returned by
       // `parseAuthRequest()` earlier.
       request: oauthReqInfo,
@@ -128,11 +128,11 @@ async function fetchDefault(request: Request, env, ctx, oauth: OAuthHelpers) {
 // The `request`, `env`, and `ctx` parameters are the same as for a normal Cloudflare Workers fetch
 // handler.
 //
-// The `oauth` parameter is the same as for the default handler (`fetchDefault`, above).
+// The `env.OAUTH_PROVIDER` is available just like in the default handler (`fetchDefault`, above).
 //
 // The `ctx.props` property contains the `props` value that was passed to
-// `oauth.completeAuthorization()` during the authorization flow that authorized this client.
-function fetchApi(request: Request, env, ctx, oauth: OAuthHelpers) {
+// `env.OAUTH_PROVIDER.completeAuthorization()` during the authorization flow that authorized this client.
+function fetchApi(request: Request, env, ctx) {
   // The application can implement its API endpoints like normal. This app implements a single
   // endpoint, `/api/whoami`, which returns the user's authenticated identity.
 
@@ -149,13 +149,13 @@ function fetchApi(request: Request, env, ctx, oauth: OAuthHelpers) {
 
 This implementation requires that your worker is configured with a Workers KV namespace binding called `OAUTH_KV`, which is used to store token information. See the file `storage-schema.md` for details on the schema of this namespace.
 
-The `OAuthHelpers` object passed to the fetch handlers provides some methods to query the storage, including:
+The `env.OAUTH_PROVIDER` object available to the fetch handlers provides some methods to query the storage, including:
 
 * Create, list, modify, and delete client_id registrations (in addition to `lookupClient()`, already shown in the example code).
 * List all active authorization grants for a particular user.
 * Revoke (delete) an authorization grant.
 
-See the interface definition for full API details.
+See the `OAuthHelpers` interface definition for full API details.
 
 ## Written by Claude
 
