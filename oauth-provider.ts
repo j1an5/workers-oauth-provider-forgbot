@@ -459,10 +459,40 @@ export class OAuthProvider {
     this.apiHandlerType = this.validateHandler(options.apiHandler, 'apiHandler');
     this.defaultHandlerType = this.validateHandler(options.defaultHandler, 'defaultHandler');
 
+    // Validate that the endpoints are either absolute paths or full URLs
+    this.validateEndpoint(options.apiRoute, 'apiRoute');
+    this.validateEndpoint(options.authorizeEndpoint, 'authorizeEndpoint');
+    this.validateEndpoint(options.tokenEndpoint, 'tokenEndpoint');
+    if (options.clientRegistrationEndpoint) {
+      this.validateEndpoint(options.clientRegistrationEndpoint, 'clientRegistrationEndpoint');
+    }
+
     this.options = {
       ...options,
       accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
     };
+  }
+  
+  /**
+   * Validates that an endpoint is either an absolute path or a full URL
+   * @param endpoint - The endpoint to validate
+   * @param name - The name of the endpoint property for error messages
+   * @throws TypeError if the endpoint is invalid
+   */
+  private validateEndpoint(endpoint: string, name: string): void {
+    if (this.isPath(endpoint)) {
+      // It should be an absolute path starting with /
+      if (!endpoint.startsWith('/')) {
+        throw new TypeError(`${name} path must be an absolute path starting with /`);
+      }
+    } else {
+      // It should be a valid URL
+      try {
+        new URL(endpoint);
+      } catch (e) {
+        throw new TypeError(`${name} must be either an absolute path starting with / or a valid URL`);
+      }
+    }
   }
   
   /**
@@ -499,7 +529,7 @@ export class OAuthProvider {
 
     // Handle .well-known/oauth-authorization-server
     if (url.pathname === '/.well-known/oauth-authorization-server') {
-      return this.handleMetadataDiscovery();
+      return this.handleMetadataDiscovery(url);
     }
 
     // Handle token endpoint
@@ -535,13 +565,38 @@ export class OAuthProvider {
   }
 
   /**
+   * Determines if an endpoint configuration is a path or a full URL
+   * @param endpoint - The endpoint configuration
+   * @returns True if the endpoint is a path (starts with /), false if it's a full URL
+   */
+  private isPath(endpoint: string): boolean {
+    return endpoint.startsWith('/');
+  }
+
+  /**
+   * Matches a URL against an endpoint pattern that can be a full URL or just a path
+   * @param url - The URL to check
+   * @param endpoint - The endpoint pattern (full URL or path)
+   * @returns True if the URL matches the endpoint pattern
+   */
+  private matchEndpoint(url: URL, endpoint: string): boolean {
+    if (this.isPath(endpoint)) {
+      // It's a path - match only the pathname
+      return url.pathname === endpoint;
+    } else {
+      // It's a full URL - match the entire URL including hostname
+      const endpointUrl = new URL(endpoint);
+      return url.hostname === endpointUrl.hostname && url.pathname === endpointUrl.pathname;
+    }
+  }
+  
+  /**
    * Checks if a URL matches the configured token endpoint
    * @param url - The URL to check
    * @returns True if the URL matches the token endpoint
    */
   private isTokenEndpoint(url: URL): boolean {
-    const tokenUrl = new URL(this.options.tokenEndpoint);
-    return url.pathname === tokenUrl.pathname;
+    return this.matchEndpoint(url, this.options.tokenEndpoint);
   }
 
   /**
@@ -551,8 +606,7 @@ export class OAuthProvider {
    */
   private isClientRegistrationEndpoint(url: URL): boolean {
     if (!this.options.clientRegistrationEndpoint) return false;
-    const registrationUrl = new URL(this.options.clientRegistrationEndpoint);
-    return url.pathname === registrationUrl.pathname;
+    return this.matchEndpoint(url, this.options.clientRegistrationEndpoint);
   }
 
   /**
@@ -561,27 +615,60 @@ export class OAuthProvider {
    * @returns True if the URL is an API request
    */
   private isApiRequest(url: URL): boolean {
-    const apiUrl = new URL(this.options.apiRoute);
-    return url.href.startsWith(apiUrl.href);
+    if (this.isPath(this.options.apiRoute)) {
+      // It's a path - match only the pathname
+      return url.pathname.startsWith(this.options.apiRoute);
+    } else {
+      // It's a full URL - match the entire URL including hostname
+      const apiUrl = new URL(this.options.apiRoute);
+      return url.hostname === apiUrl.hostname && url.pathname.startsWith(apiUrl.pathname);
+    }
+  }
+
+  /**
+   * Gets the full URL for an endpoint, using the provided request URL's
+   * origin for endpoints specified as just paths
+   * @param endpoint - The endpoint configuration (path or full URL)
+   * @param requestUrl - The URL of the incoming request
+   * @returns The full URL for the endpoint
+   */
+  private getFullEndpointUrl(endpoint: string, requestUrl: URL): string {
+    if (this.isPath(endpoint)) {
+      // It's a path - use the request URL's origin
+      return `${requestUrl.origin}${endpoint}`;
+    } else {
+      // It's already a full URL
+      return endpoint;
+    }
   }
 
   /**
    * Handles the OAuth metadata discovery endpoint
    * Implements RFC 8414 for OAuth Server Metadata
+   * @param requestUrl - The URL of the incoming request
    * @returns Response with OAuth server metadata
    */
-  private async handleMetadataDiscovery(): Promise<Response> {
+  private async handleMetadataDiscovery(requestUrl: URL): Promise<Response> {
+    // For endpoints specified as paths, use the request URL's origin
+    const tokenEndpoint = this.getFullEndpointUrl(this.options.tokenEndpoint, requestUrl);
+    const authorizeEndpoint = this.getFullEndpointUrl(this.options.authorizeEndpoint, requestUrl);
+    
+    let registrationEndpoint = undefined;
+    if (this.options.clientRegistrationEndpoint) {
+      registrationEndpoint = this.getFullEndpointUrl(this.options.clientRegistrationEndpoint, requestUrl);
+    }
+
     const metadata = {
-      issuer: new URL(this.options.tokenEndpoint).origin,
-      authorization_endpoint: this.options.authorizeEndpoint,
-      token_endpoint: this.options.tokenEndpoint,
-      registration_endpoint: this.options.clientRegistrationEndpoint,
+      issuer: new URL(tokenEndpoint).origin,
+      authorization_endpoint: authorizeEndpoint,
+      token_endpoint: tokenEndpoint,
+      registration_endpoint: registrationEndpoint,
       token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       response_types_supported: ["code"],
       scopes_supported: [], // This could be configured in the future
       response_modes_supported: ["query"],
-      revocation_endpoint: this.options.tokenEndpoint, // Reusing token endpoint for revocation
+      revocation_endpoint: tokenEndpoint, // Reusing token endpoint for revocation
       code_challenge_methods_supported: ["plain", "S256"], // PKCE support
     };
 

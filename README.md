@@ -26,7 +26,9 @@ export default new OAuthProvider({
   // Configure my API route. Any requests whose URL starts with this will be considered to be
   // API requests. The OAuth provider will check the access token on these requests, and then,
   // if the token is valid, send the request to the API handler.
-  apiRoute: "https://example.com/api/",
+  // You can provide either a full URL (which will match the hostname) or just a path
+  // (which will match any hostname).
+  apiRoute: "/api/", // Using just a path - will match any hostname
 
   // When the OAuth system receives an API request with a valid access token, it passes the request
   // to this handler object's fetch method.
@@ -42,15 +44,18 @@ export default new OAuthProvider({
   // the OAuthProvider. It is up to the application to implement a UI here. The only reason why
   // this URL is given to the OAuthProvider is so that it can implement the RFC-8414 metadata
   // discovery endpoint, i.e. `.well-known/oauth-authorization-server`.
+  // Can also be specified as just a path (e.g., "/authorize").
   authorizeEndpoint: "https://example.com/authorize",
 
   // This specifies the OAuth 2 token exchange endpoint. The OAuthProvider will implement this
   // endpoint (by directly responding to requests with a matching URL).
+  // Can also be specified as just a path (e.g., "/oauth/token").
   tokenEndpoint: "https://example.com/oauth/token",
 
   // This specifies the RFC-7591 dynamic client registration endpoint. This setting is optional,
   // but if provided, the OAuthProvider will implement this endpoint to allow dynamic client
   // registration.
+  // Can also be specified as just a path (e.g., "/oauth/register").
   clientRegistrationEndpoint: "https://example.com/oauth/register"
 });
 
