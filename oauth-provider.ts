@@ -49,25 +49,33 @@ export interface OAuthProviderOptions {
 }
 
 /**
- * Handler function type for authenticated API requests
- * @param request - The original HTTP request
- * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
- * @param ctx - Cloudflare Worker execution context with ctx.props for user properties
- * @returns A Promise resolving to an HTTP Response
+ * Handler object type for authenticated API requests
+ * Contains a fetch method that processes authenticated API requests
  */
 export interface ApiHandler {
-  (request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
+  /**
+   * Fetch handler for authenticated API requests
+   * @param request - The original HTTP request
+   * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
+   * @param ctx - Cloudflare Worker execution context with ctx.props for user properties
+   * @returns A Promise resolving to an HTTP Response
+   */
+  fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
 }
 
 /**
- * Handler function type for non-API or unauthenticated requests
- * @param request - The original HTTP request
- * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
- * @param ctx - Cloudflare Worker execution context
- * @returns A Promise resolving to an HTTP Response
+ * Handler object type for non-API or unauthenticated requests
+ * Contains a fetch method that processes default requests
  */
 export interface DefaultHandler {
-  (request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
+  /**
+   * Fetch handler for non-API or unauthenticated requests
+   * @param request - The original HTTP request
+   * @param env - Cloudflare Worker environment variables with env.OAUTH_PROVIDER containing helper methods
+   * @param ctx - Cloudflare Worker execution context
+   * @returns A Promise resolving to an HTTP Response
+   */
+  fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response>;
 }
 
 /**
@@ -499,7 +507,7 @@ export class OAuthProvider {
     }
     
     // Default handler for all other requests
-    return this.options.defaultHandler(request, env, ctx);
+    return this.options.defaultHandler.fetch(request, env, ctx);
   }
 
   /**
@@ -1119,8 +1127,8 @@ export class OAuthProvider {
       env.OAUTH_PROVIDER = this.createOAuthHelpers(env);
     }
     
-    // Call the API handler with the props in ctx
-    return this.options.apiHandler(
+    // Call the API handler's fetch method with the props in ctx
+    return this.options.apiHandler.fetch(
       request,
       env,
       ctx
