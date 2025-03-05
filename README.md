@@ -130,17 +130,17 @@ async function fetchDefault(request: Request, env, ctx, oauth: OAuthHelpers) {
 //
 // The `oauth` parameter is the same as for the default handler (`fetchDefault`, above).
 //
-// The `props` parameter contains the `props` value that was passed to
+// The `ctx.props` property contains the `props` value that was passed to
 // `oauth.completeAuthorization()` during the authorization flow that authorized this client.
-function fetchApi(request: Request, env, ctx, oauth: OAuthHelpers, props) {
+function fetchApi(request: Request, env, ctx, oauth: OAuthHelpers) {
   // The application can implement its API endpoints like normal. This app implements a single
   // endpoint, `/api/whoami`, which returns the user's authenticated identity.
 
   let url = new URL(request.url);
   if (url.pathname == "/api/whoami") {
-    // Since the username is embedded in `props`, which came from the access token that the
+    // Since the username is embedded in `ctx.props`, which came from the access token that the
     // OAuthProivder already verified, we don't need to do any other authentication steps.
-    return new Response(`You are authenticated as: ${props.username}`);
+    return new Response(`You are authenticated as: ${ctx.props.username}`);
   }
 
   return new Response("Not found", {status: 404});

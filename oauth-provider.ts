@@ -52,13 +52,12 @@ export interface OAuthProviderOptions {
  * Handler function type for authenticated API requests
  * @param request - The original HTTP request
  * @param env - Cloudflare Worker environment variables
- * @param ctx - Cloudflare Worker execution context
+ * @param ctx - Cloudflare Worker execution context with ctx.props for user properties
  * @param oauth - Helper methods for OAuth operations
- * @param props - User-specific properties from the authorization grant
  * @returns A Promise resolving to an HTTP Response
  */
 export interface ApiHandler {
-  (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers, props: any): Promise<Response>;
+  (request: Request, env: any, ctx: ExecutionContext, oauth: OAuthHelpers): Promise<Response>;
 }
 
 /**
@@ -1109,13 +1108,15 @@ export class OAuthProvider {
     // Extract the denormalized grant data directly from the token
     const grantProps = tokenData.grant.props;
 
-    // Call the API handler with the grant props from the token
+    // Set the grant props on the context object
+    ctx.props = grantProps;
+    
+    // Call the API handler with the props in ctx
     return this.options.apiHandler(
       request,
       env,
       ctx,
-      this.createOAuthHelpers(env),
-      grantProps
+      this.createOAuthHelpers(env)
     );
   }
   /**
