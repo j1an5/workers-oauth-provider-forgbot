@@ -32,11 +32,11 @@ export default new OAuthProvider({
   // to this handler object's fetch method.
   // You can provide either an object with a fetch method (ExportedHandler)
   // or a class extending WorkerEntrypoint.
-  apiHandler: apiHandler, // Using an object with a fetch method
+  apiHandler: ApiHandler, // Using a WorkerEntrypoint class
 
   // Any requests which aren't API request will be passed to the default handler instead.
-  // Here we use a class extending WorkerEntrypoint as an alternative approach.
-  defaultHandler: DefaultWorker, // Using a WorkerEntrypoint class
+  // Again, this can be either an object or a WorkerEntrypoint.
+  defaultHandler: defaultHandler, // Using an object with a fetch method
 
   // This specifies the URL of the OAuth authorization flow UI. This UI is NOT implemented by
   // the OAuthProvider. It is up to the application to implement a UI here. The only reason why
@@ -54,7 +54,7 @@ export default new OAuthProvider({
   clientRegistrationEndpoint: "https://example.com/oauth/register"
 });
 
-// The default handler object - the OAuthProvider will pass through HTTP requests to this object's fetch method 
+// The default handler object - the OAuthProvider will pass through HTTP requests to this object's fetch method
 // if they aren't API requests or do not have a valid access token
 const defaultHandler = {
   // This fetch method works just like a standard Cloudflare Workers fetch handler
@@ -129,19 +129,17 @@ const defaultHandler = {
 };
 
 // The API handler object - the OAuthProivder will pass authorized API requests to this object's fetch method
-// (because we provided it as the `apiHandler` setting, above). This is ONLY called for API requests 
+// (because we provided it as the `apiHandler` setting, above). This is ONLY called for API requests
 // that had a valid access token.
-const apiHandler = {
-  // This fetch method works just like a standard Cloudflare Workers fetch handler
+class ApiHandler extends WorkerEntrypoint {
+  // This fetch method works just like any other WorkerEntrypoint fetch method. The `request` is
+  // passed as a parameter, while `env` and `ctx` are available as `this.env` and `this.ctx`.
   //
-  // The `request`, `env`, and `ctx` parameters are the same as for a normal Cloudflare Workers fetch
-  // handler.
+  // The `this.env.OAUTH_PROVIDER` is available just like in the default handler.
   //
-  // The `env.OAUTH_PROVIDER` is available just like in the default handler.
-  //
-  // The `ctx.props` property contains the `props` value that was passed to
+  // The `this.ctx.props` property contains the `props` value that was passed to
   // `env.OAUTH_PROVIDER.completeAuthorization()` during the authorization flow that authorized this client.
-  fetch(request: Request, env, ctx) {
+  fetch(request: Request) {
     // The application can implement its API endpoints like normal. This app implements a single
     // endpoint, `/api/whoami`, which returns the user's authenticated identity.
 
@@ -149,37 +147,12 @@ const apiHandler = {
     if (url.pathname == "/api/whoami") {
       // Since the username is embedded in `ctx.props`, which came from the access token that the
       // OAuthProivder already verified, we don't need to do any other authentication steps.
-      return new Response(`You are authenticated as: ${ctx.props.username}`);
+      return new Response(`You are authenticated as: ${this.ctx.props.username}`);
     }
 
     return new Response("Not found", {status: 404});
   }
 };
-
-// Example of a WorkerEntrypoint class that can be used as a handler.
-// This approach is equivalent to the object-with-fetch approach but follows
-// the newer Cloudflare Workers pattern.
-class DefaultWorker extends WorkerEntrypoint {
-  // A constructor for initialization (the OAuth Provider will pass ctx and env to this)
-  constructor(ctx: ExecutionContext, env: any) {
-    // Pass ctx and env to the superclass constructor
-    super(ctx, env);
-    // You can do additional initialization here if needed
-  }
-
-  // The fetch handler method - this gets passed only the request
-  async fetch(request: Request): Promise<Response> {
-    let url = new URL(request.url);
-
-    if (url.pathname == "/authorize") {
-      // Implementation of the auth flow UI would go here,
-      // using env.OAUTH_PROVIDER to access OAuth helpers
-      // ...
-    }
-
-    return new Response("Not found", {status: 404});
-  }
-}
 ```
 
 This implementation requires that your worker is configured with a Workers KV namespace binding called `OAUTH_KV`, which is used to store token information. See the file `storage-schema.md` for details on the schema of this namespace.
