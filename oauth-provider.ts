@@ -822,7 +822,7 @@ class OAuthProviderImpl {
     let contentType = request.headers.get('Content-Type') || '';
     let body: any = {};
 
-    // According to OAuth 2.0 RFC 6749 Section 2.3, token requests MUST use 
+    // According to OAuth 2.0 RFC 6749 Section 2.3, token requests MUST use
     // application/x-www-form-urlencoded content type
     if (!contentType.includes('application/x-www-form-urlencoded')) {
       return createErrorResponse(
@@ -1264,16 +1264,64 @@ class OAuthProviderImpl {
       );
     }
 
-    // Parse client metadata
-    const clientMetadata = await request.json();
-
-    // Validate redirect URIs
-    if (!clientMetadata.redirect_uris || !Array.isArray(clientMetadata.redirect_uris) || clientMetadata.redirect_uris.length === 0) {
+    // Check content length to ensure it's not too large (1 MiB limit)
+    const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
+    if (contentLength > 1048576) { // 1 MiB = 1048576 bytes
       return createErrorResponse(
-        'invalid_redirect_uri',
-        'At least one redirect URI is required'
+        'invalid_request',
+        'Request payload too large, must be under 1 MiB',
+        413
       );
     }
+
+    // Parse client metadata with a size limitation
+    let clientMetadata;
+    try {
+      const text = await request.text();
+      if (text.length > 1048576) { // Double-check text length
+        return createErrorResponse(
+          'invalid_request',
+          'Request payload too large, must be under 1 MiB',
+          413
+        );
+      }
+      clientMetadata = JSON.parse(text);
+    } catch (error) {
+      return createErrorResponse(
+        'invalid_request',
+        'Invalid JSON payload',
+        400
+      );
+    }
+
+    // Basic type validation functions
+    const validateStringField = (field: any): string | undefined => {
+      if (field === undefined) {
+        return undefined;
+      }
+      if (typeof field !== 'string') {
+        throw new Error('Field must be a string');
+      }
+      return field;
+    };
+
+    const validateStringArray = (arr: any): string[] | undefined => {
+      if (arr === undefined) {
+        return undefined;
+      }
+      if (!Array.isArray(arr)) {
+        throw new Error('Field must be an array');
+      }
+
+      // Validate all elements are strings
+      for (const item of arr) {
+        if (typeof item !== 'string') {
+          throw new Error('All array elements must be strings');
+        }
+      }
+
+      return arr;
+    };
 
     // Create client
     const clientId = generateRandomString(16);
@@ -1282,21 +1330,35 @@ class OAuthProviderImpl {
     // Hash the client secret before storing
     const hashedSecret = await hashSecret(clientSecret);
 
-    const clientInfo: ClientInfo = {
-      clientId,
-      clientSecret: hashedSecret, // Store the hashed secret
-      redirectUris: clientMetadata.redirect_uris,
-      clientName: clientMetadata.client_name,
-      logoUri: clientMetadata.logo_uri,
-      clientUri: clientMetadata.client_uri,
-      policyUri: clientMetadata.policy_uri,
-      tosUri: clientMetadata.tos_uri,
-      jwksUri: clientMetadata.jwks_uri,
-      contacts: clientMetadata.contacts,
-      grantTypes: clientMetadata.grant_types || ['authorization_code', 'refresh_token'],
-      responseTypes: clientMetadata.response_types || ['code'],
-      registrationDate: Math.floor(Date.now() / 1000)
-    };
+    let clientInfo: ClientInfo;
+    try {
+      // Validate redirect URIs - must exist and have at least one entry
+      const redirectUris = validateStringArray(clientMetadata.redirect_uris);
+      if (!redirectUris || redirectUris.length === 0) {
+        throw new Error('At least one redirect URI is required');
+      }
+
+      clientInfo = {
+        clientId,
+        clientSecret: hashedSecret,
+        redirectUris,
+        clientName: validateStringField(clientMetadata.client_name),
+        logoUri: validateStringField(clientMetadata.logo_uri),
+        clientUri: validateStringField(clientMetadata.client_uri),
+        policyUri: validateStringField(clientMetadata.policy_uri),
+        tosUri: validateStringField(clientMetadata.tos_uri),
+        jwksUri: validateStringField(clientMetadata.jwks_uri),
+        contacts: validateStringArray(clientMetadata.contacts),
+        grantTypes: validateStringArray(clientMetadata.grant_types) || ['authorization_code', 'refresh_token'],
+        responseTypes: validateStringArray(clientMetadata.response_types) || ['code'],
+        registrationDate: Math.floor(Date.now() / 1000)
+      };
+    } catch (error) {
+      return createErrorResponse(
+        'invalid_client_metadata',
+        error instanceof Error ? error.message : 'Invalid client metadata'
+      );
+    }
 
     // Store client info
     await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientInfo));
