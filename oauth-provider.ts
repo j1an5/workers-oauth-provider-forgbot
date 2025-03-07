@@ -1617,30 +1617,6 @@ async function decryptProps(key: CryptoKey, encryptedData: string, iv: string): 
   return JSON.parse(jsonData);
 }
 
-/**
- * Exports a CryptoKey to a JWK (JSON Web Key)
- * @param key - The CryptoKey to export
- * @returns A Promise resolving to the JWK
- */
-async function exportCryptoKeyToJwk(key: CryptoKey): Promise<JsonWebKey> {
-  return await crypto.subtle.exportKey('jwk', key);
-}
-
-/**
- * Imports a JWK (JSON Web Key) to a CryptoKey
- * @param jwk - The JWK to import
- * @returns A Promise resolving to the CryptoKey
- */
-async function importJwkToCryptoKey(jwk: JsonWebKey): Promise<CryptoKey> {
-  return await crypto.subtle.importKey(
-    'jwk',
-    jwk,
-    { name: 'AES-GCM' },
-    true, // extractable
-    ['encrypt', 'decrypt']
-  );
-}
-
 // Static HMAC key for wrapping key derivation
 // This ensures that even if someone has the token ID, they can't derive the wrapping key
 // We use a fixed array of 32 bytes for optimal performance
