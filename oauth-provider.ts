@@ -320,11 +320,6 @@ export interface Grant {
    */
   encryptedProps: string;
 
-  /**
-   * Initialization vector used for props encryption
-   */
-  encryptionIv: string;
-
   // No backup of the encryption key is stored
   // This ensures true end-to-end encryption where only token holders can decrypt
 
@@ -434,11 +429,6 @@ export interface Token {
      * Encrypted application-specific properties
      */
     encryptedProps: string;
-
-    /**
-     * Initialization vector used for props encryption
-     */
-    encryptionIv: string;
   };
 }
 
@@ -1040,7 +1030,6 @@ export class OAuthProvider {
     // Update access token data with wrapped key and encrypted props
     accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
     accessTokenData.grant.encryptedProps = grantData.encryptedProps;
-    accessTokenData.grant.encryptionIv = grantData.encryptionIv;
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
@@ -1201,7 +1190,6 @@ export class OAuthProvider {
     // Update access token data with wrapped key and encrypted props
     accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
     accessTokenData.grant.encryptedProps = grantData.encryptedProps;
-    accessTokenData.grant.encryptionIv = grantData.encryptionIv;
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
@@ -1376,8 +1364,7 @@ export class OAuthProvider {
     // Decrypt the props
     const decryptedProps = await decryptProps(
       encryptionKey,
-      tokenData.grant.encryptedProps,
-      tokenData.grant.encryptionIv
+      tokenData.grant.encryptedProps
     );
 
     // Set the decrypted props on the context object
@@ -1543,11 +1530,13 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
 }
 
 /**
- * Generates a new symmetric encryption key for protecting props
- * @returns A Promise resolving to a CryptoKey object
+ * Encrypts props data with a newly generated key
+ * @param data - The data to encrypt
+ * @returns An object containing the encrypted data and the generated key
  */
-async function generatePropsEncryptionKey(): Promise<CryptoKey> {
-  return await crypto.subtle.generateKey(
+async function encryptProps(data: any): Promise<{ encryptedData: string, key: CryptoKey }> {
+  // Generate a new encryption key for this specific props data
+  const key = await crypto.subtle.generateKey(
     {
       name: 'AES-GCM',
       length: 256
@@ -1555,17 +1544,9 @@ async function generatePropsEncryptionKey(): Promise<CryptoKey> {
     true, // extractable
     ['encrypt', 'decrypt']
   );
-}
 
-/**
- * Encrypts props data using the provided key
- * @param key - The CryptoKey to use for encryption
- * @param data - The data to encrypt
- * @returns An object containing the encrypted data and IV
- */
-async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData: string, iv: string }> {
-  // Generate a random initialization vector
-  const iv = crypto.getRandomValues(new Uint8Array(12));
+  // Use a constant IV (all zeros) since each key is used only once
+  const iv = new Uint8Array(12);
 
   // Convert data to string
   const jsonData = JSON.stringify(data);
@@ -1585,7 +1566,7 @@ async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData:
   // Convert to base64 for storage
   return {
     encryptedData: arrayBufferToBase64(encryptedBuffer),
-    iv: arrayBufferToBase64(iv)
+    key
   };
 }
 
@@ -1593,19 +1574,20 @@ async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData:
  * Decrypts encrypted props data using the provided key
  * @param key - The CryptoKey to use for decryption
  * @param encryptedData - The encrypted data as a base64 string
- * @param iv - The initialization vector as a base64 string
  * @returns The decrypted data object
  */
-async function decryptProps(key: CryptoKey, encryptedData: string, iv: string): Promise<any> {
-  // Convert base64 strings back to ArrayBuffers
+async function decryptProps(key: CryptoKey, encryptedData: string): Promise<any> {
+  // Convert base64 string back to ArrayBuffer
   const encryptedBuffer = base64ToArrayBuffer(encryptedData);
-  const ivBuffer = base64ToArrayBuffer(iv);
+  
+  // Use the same constant IV (all zeros) that was used for encryption
+  const iv = new Uint8Array(12);
 
   // Decrypt the data
   const decryptedBuffer = await crypto.subtle.decrypt(
     {
       name: 'AES-GCM',
-      iv: ivBuffer
+      iv
     },
     key,
     encryptedBuffer
@@ -1784,11 +1766,8 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Hash the authorization code
     const authCodeId = await hashSecret(authCode);
 
-    // Generate a symmetric encryption key for props
-    const encryptionKey = await generatePropsEncryptionKey();
-
-    // Encrypt the props data
-    const { encryptedData, iv } = await encryptProps(encryptionKey, options.props);
+    // Encrypt the props data with a new key generated for this grant
+    const { encryptedData, key: encryptionKey } = await encryptProps(options.props);
 
     // No backup of the encryption key - only token holders will be able to decrypt
 
@@ -1803,7 +1782,6 @@ class OAuthHelpersImpl implements OAuthHelpers {
       scope: options.scope,
       metadata: options.metadata,
       encryptedProps: encryptedData,
-      encryptionIv: iv,
       createdAt: Math.floor(Date.now() / 1000),
       authCodeId: authCodeId, // Store the auth code hash in the grant
       authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key

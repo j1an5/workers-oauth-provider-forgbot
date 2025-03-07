@@ -67,7 +67,6 @@ Grant records store information about permissions a user has granted to an appli
     "deviceInfo": "Chrome on Windows"
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
-  "encryptionIv": "base64-encoded initialization vector",
   "createdAt": 1644256123,
   "authCodeId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
   "authCodeWrappedKey": "base64-encoded wrapped encryption key",
@@ -88,7 +87,6 @@ Grant records store information about permissions a user has granted to an appli
     "deviceInfo": "Chrome on Windows"
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
-  "encryptionIv": "base64-encoded initialization vector",
   "createdAt": 1644256123,
   "refreshTokenId": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
   "refreshTokenWrappedKey": "base64-encoded wrapped encryption key"
@@ -107,7 +105,6 @@ Grant records store information about permissions a user has granted to an appli
     "deviceInfo": "Chrome on Windows"
   },
   "encryptedProps": "AES-GCM encrypted base64-encoded string",
-  "encryptionIv": "base64-encoded initialization vector",
   "createdAt": 1644256123,
   "refreshTokenId": "7f2ab876c546a9e9f988ba7645af78239cfe980a4231ab38fcb895cb244a0a12",
   "refreshTokenWrappedKey": "base64-encoded wrapped encryption key",
@@ -140,8 +137,7 @@ Token records store metadata about issued access tokens, including denormalized 
   "grant": {
     "clientId": "abc123",
     "scope": ["document.read", "document.write"],
-    "encryptedProps": "AES-GCM encrypted base64-encoded string",
-    "encryptionIv": "base64-encoded initialization vector"
+    "encryptedProps": "AES-GCM encrypted base64-encoded string"
   }
 }
 ```
@@ -163,6 +159,9 @@ Token records store metadata about issued access tokens, including denormalized 
 
 2. **End-to-End Encryption for Props**:
    - Each grant has its own unique AES-256 key for encrypting props
+   - A constant all-zero initialization vector (IV) is used with AES-GCM encryption
+   - This is cryptographically secure because each key is only used exactly once
+   - Using unique keys eliminates the IV randomization requirement of AES-GCM
    - The encryption key is wrapped (encrypted) using each token as key material
    - The wrapped key can only be unwrapped by someone with the actual token
    - No backup of the encryption key is stored anywhere
@@ -200,8 +199,8 @@ Token records store metadata about issued access tokens, including denormalized 
 2. A user authorizes the client, creating a `grant:{userId}:{grantId}` entry that includes:
    - The hashed authorization code in the `authCodeId` field
    - PKCE code challenge and method (if PKCE is used)
-   - A new AES-256 encryption key is generated for the grant
-   - The `props` data is encrypted using this key with AES-GCM
+   - A new AES-256 encryption key is generated specifically for this grant
+   - The `props` data is encrypted using this key with AES-GCM and a constant zero IV
    - The encryption key is wrapped using the authorization code
    - The wrapped key is stored in `authCodeWrappedKey`
    - A 10-minute TTL on the grant record
