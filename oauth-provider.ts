@@ -504,6 +504,38 @@ export interface GrantSummary {
  * and dynamic client registration.
  */
 export class OAuthProvider {
+  #impl :OAuthProviderImpl;
+
+  /**
+   * Creates a new OAuth provider instance
+   * @param options - Configuration options for the provider
+   */
+  constructor(options: OAuthProviderOptions) {
+    this.#impl = new OAuthProviderImpl(options);
+  }
+
+  /**
+   * Main fetch handler for the Worker
+   * Routes requests to the appropriate handler based on the URL
+   * @param request - The HTTP request
+   * @param env - Cloudflare Worker environment variables
+   * @param ctx - Cloudflare Worker execution context
+   * @returns A Promise resolving to an HTTP Response
+   */
+  fetch(request: Request, env: any, ctx: ExecutionContext): Promise<Response> {
+    return this.#impl.fetch(request, env, ctx);
+  }
+}
+
+/**
+ * Implementation class backing OAuthProvider.
+ *
+ * We use a PImpl pattern in `OAuthProvider` to make sure we don't inadvertently export any private
+ * methods over RPC. Unfortunately, declaring a method "private" in TypeScript is merely a type
+ * annotation, and does not actually prevent the method from being called from outside the class,
+ * including over RPC.
+ */
+class OAuthProviderImpl {
   /**
    * Configuration options for the provider
    */
@@ -1692,14 +1724,14 @@ async function unwrapKeyWithToken(tokenStr: string, wrappedKeyBase64: string): P
  */
 class OAuthHelpersImpl implements OAuthHelpers {
   private env: any;
-  private provider: OAuthProvider;
+  private provider: OAuthProviderImpl;
 
   /**
    * Creates a new OAuthHelpers instance
    * @param env - Cloudflare Worker environment variables
    * @param provider - Reference to the parent provider instance
    */
-  constructor(env: any, provider: OAuthProvider) {
+  constructor(env: any, provider: OAuthProviderImpl) {
     this.env = env;
     this.provider = provider;
   }
