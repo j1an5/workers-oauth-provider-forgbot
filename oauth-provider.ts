@@ -1579,7 +1579,7 @@ async function encryptProps(data: any): Promise<{ encryptedData: string, key: Cr
 async function decryptProps(key: CryptoKey, encryptedData: string): Promise<any> {
   // Convert base64 string back to ArrayBuffer
   const encryptedBuffer = base64ToArrayBuffer(encryptedData);
-  
+
   // Use the same constant IV (all zeros) that was used for encryption
   const iv = new Uint8Array(12);
 
