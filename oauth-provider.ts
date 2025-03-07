@@ -275,11 +275,6 @@ export interface CompleteAuthorizationOptions {
    * authorized by this grant
    */
   props: any;
-
-  /**
-   * Optional custom expiration time in seconds for the tokens
-   */
-  expiresIn?: number;
 }
 
 /**
