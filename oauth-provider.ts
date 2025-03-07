@@ -988,20 +988,6 @@ export class OAuthProvider {
     const now = Math.floor(Date.now() / 1000);
     const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
 
-    // Store access token with denormalized grant information
-    const accessTokenData: Token = {
-      id: accessTokenId,
-      grantId: grantId,
-      userId: userId,
-      createdAt: now,
-      expiresAt: accessTokenExpiresAt,
-      grant: {
-        clientId: grantData.clientId,
-        scope: grantData.scope,
-        encryptedProps: grantData.encryptedProps
-      }
-    };
-
     // Get the encryption key for props by unwrapping it using the auth code
     const encryptionKey = await unwrapKeyWithToken(code, grantData.authCodeWrappedKey!);
 
@@ -1027,9 +1013,20 @@ export class OAuthProvider {
     // Update the grant with the refresh token hash and no TTL
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
 
-    // Update access token data with wrapped key and encrypted props
-    accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
-    accessTokenData.grant.encryptedProps = grantData.encryptedProps;
+    // Store access token with denormalized grant information
+    const accessTokenData: Token = {
+      id: accessTokenId,
+      grantId: grantId,
+      userId: userId,
+      createdAt: now,
+      expiresAt: accessTokenExpiresAt,
+      wrappedEncryptionKey: accessTokenWrappedKey,
+      grant: {
+        clientId: grantData.clientId,
+        scope: grantData.scope,
+        encryptedProps: grantData.encryptedProps
+      }
+    };
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
@@ -1129,20 +1126,6 @@ export class OAuthProvider {
     const now = Math.floor(Date.now() / 1000);
     const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
 
-    // Store new access token with denormalized grant information
-    const accessTokenData: Token = {
-      id: accessTokenId,
-      grantId: grantId,
-      userId: userId,
-      createdAt: now,
-      expiresAt: accessTokenExpiresAt,
-      grant: {
-        clientId: grantData.clientId,
-        scope: grantData.scope,
-        encryptedProps: grantData.encryptedProps
-      }
-    };
-
     // Determine which wrapped key to use for unwrapping
     let wrappedKeyToUse: string;
     if (isCurrentToken && grantData.refreshTokenWrappedKey) {
@@ -1187,9 +1170,20 @@ export class OAuthProvider {
     // Save the updated grant
     await env.OAUTH_KV.put(grantKey, JSON.stringify(grantData));
 
-    // Update access token data with wrapped key and encrypted props
-    accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
-    accessTokenData.grant.encryptedProps = grantData.encryptedProps;
+    // Store new access token with denormalized grant information
+    const accessTokenData: Token = {
+      id: accessTokenId,
+      grantId: grantId,
+      userId: userId,
+      createdAt: now,
+      expiresAt: accessTokenExpiresAt,
+      wrappedEncryptionKey: accessTokenWrappedKey,
+      grant: {
+        clientId: grantData.clientId,
+        scope: grantData.scope,
+        encryptedProps: grantData.encryptedProps
+      }
+    };
 
     // Save access token with TTL
     await env.OAUTH_KV.put(
