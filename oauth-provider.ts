@@ -58,6 +58,12 @@ export interface OAuthProviderOptions {
    * Defaults to 1 hour (3600 seconds) if not specified.
    */
   accessTokenTTL?: number;
+
+  /**
+   * List of scopes supported by this OAuth provider.
+   * If not provided, the 'scopes_supported' field will be omitted from the OAuth metadata.
+   */
+  scopesSupported?: string[];
 }
 
 // Using ExportedHandler from Cloudflare Workers Types for both API and default handlers
@@ -774,7 +780,7 @@ class OAuthProviderImpl {
       token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       response_types_supported: ["code"],
-      scopes_supported: [], // This could be configured in the future
+      scopes_supported: this.options.scopesSupported,
       response_modes_supported: ["query"],
       revocation_endpoint: tokenEndpoint, // Reusing token endpoint for revocation
       code_challenge_methods_supported: ["plain", "S256"], // PKCE support

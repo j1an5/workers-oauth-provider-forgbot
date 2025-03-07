@@ -60,7 +60,12 @@ export default new OAuthProvider({
   // but if provided, the OAuthProvider will implement this endpoint to allow dynamic client
   // registration.
   // Can also be specified as just a path (e.g., "/oauth/register").
-  clientRegistrationEndpoint: "https://example.com/oauth/register"
+  clientRegistrationEndpoint: "https://example.com/oauth/register",
+
+  // Optional list of scopes supported by this OAuth provider.
+  // If provided, this will be included in the RFC 8414 metadata as 'scopes_supported'.
+  // If not provided, the 'scopes_supported' field will be omitted from the metadata.
+  scopesSupported: ["document.read", "document.write", "profile"]
 });
 
 // The default handler object - the OAuthProvider will pass through HTTP requests to this object's fetch method
