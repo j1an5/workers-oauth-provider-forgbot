@@ -553,7 +553,7 @@ export class OAuthProvider {
       accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
     };
   }
-  
+
   /**
    * Validates that an endpoint is either an absolute path or a full URL
    * @param endpoint - The endpoint to validate
@@ -575,7 +575,7 @@ export class OAuthProvider {
       }
     }
   }
-  
+
   /**
    * Validates that a handler is either an ExportedHandler or a class extending WorkerEntrypoint
    * @param handler - The handler to validate
@@ -588,12 +588,12 @@ export class OAuthProvider {
       // It's an ExportedHandler object
       return HandlerType.EXPORTED_HANDLER;
     }
-    
+
     // Check if it's a class constructor extending WorkerEntrypoint
     if (typeof handler === 'function' && handler.prototype instanceof WorkerEntrypoint) {
       return HandlerType.WORKER_ENTRYPOINT;
     }
-    
+
     throw new TypeError(`${name} must be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint`);
   }
 
@@ -670,7 +670,7 @@ export class OAuthProvider {
       return url.hostname === endpointUrl.hostname && url.pathname === endpointUrl.pathname;
     }
   }
-  
+
   /**
    * Checks if a URL matches the configured token endpoint
    * @param url - The URL to check
@@ -706,7 +706,7 @@ export class OAuthProvider {
       return url.hostname === apiUrl.hostname && url.pathname.startsWith(apiUrl.pathname);
     }
   }
-  
+
   /**
    * Checks if a URL is an API request based on the configured API route(s)
    * @param url - The URL to check
@@ -750,7 +750,7 @@ export class OAuthProvider {
     // For endpoints specified as paths, use the request URL's origin
     const tokenEndpoint = this.getFullEndpointUrl(this.options.tokenEndpoint, requestUrl);
     const authorizeEndpoint = this.getFullEndpointUrl(this.options.authorizeEndpoint, requestUrl);
-    
+
     let registrationEndpoint = undefined;
     if (this.options.clientRegistrationEndpoint) {
       registrationEndpoint = this.getFullEndpointUrl(this.options.clientRegistrationEndpoint, requestUrl);
@@ -1014,11 +1014,11 @@ export class OAuthProvider {
 
     // Get the encryption key for props by unwrapping it using the auth code
     const encryptionKey = await unwrapKeyWithToken(code, grantData.authCodeWrappedKey!);
-    
+
     // Wrap the key for both the new access token and refresh token
     const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, encryptionKey);
     const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, encryptionKey);
-    
+
     // Update the grant:
     // - Remove the auth code hash (it's single-use)
     // - Remove PKCE-related fields (one-time use)
@@ -1041,7 +1041,7 @@ export class OAuthProvider {
     accessTokenData.wrappedEncryptionKey = accessTokenWrappedKey;
     accessTokenData.grant.encryptedProps = grantData.encryptedProps;
     accessTokenData.grant.encryptionIv = grantData.encryptionIv;
-    
+
     // Save access token with TTL
     await env.OAUTH_KV.put(
       `token:${userId}:${grantId}:${accessTokenId}`,
@@ -1168,10 +1168,10 @@ export class OAuthProvider {
         'Encrypted key unavailable for this token'
       );
     }
-    
+
     // Unwrap the encryption key using the refresh token
     const encryptionKey = await unwrapKeyWithToken(refreshToken, wrappedKeyToUse);
-    
+
     // Wrap the key for both the new access token and refresh token
     const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, encryptionKey);
     const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, encryptionKey);
@@ -1372,11 +1372,11 @@ export class OAuthProvider {
 
     // Unwrap the encryption key using the access token
     const encryptionKey = await unwrapKeyWithToken(accessToken, tokenData.wrappedEncryptionKey);
-    
+
     // Decrypt the props
     const decryptedProps = await decryptProps(
-      encryptionKey, 
-      tokenData.grant.encryptedProps, 
+      encryptionKey,
+      tokenData.grant.encryptedProps,
       tokenData.grant.encryptionIv
     );
 
@@ -1566,12 +1566,12 @@ async function generatePropsEncryptionKey(): Promise<CryptoKey> {
 async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData: string, iv: string }> {
   // Generate a random initialization vector
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  
+
   // Convert data to string
   const jsonData = JSON.stringify(data);
   const encoder = new TextEncoder();
   const encodedData = encoder.encode(jsonData);
-  
+
   // Encrypt the data
   const encryptedBuffer = await crypto.subtle.encrypt(
     {
@@ -1581,7 +1581,7 @@ async function encryptProps(key: CryptoKey, data: any): Promise<{ encryptedData:
     key,
     encodedData
   );
-  
+
   // Convert to base64 for storage
   return {
     encryptedData: arrayBufferToBase64(encryptedBuffer),
@@ -1600,7 +1600,7 @@ async function decryptProps(key: CryptoKey, encryptedData: string, iv: string): 
   // Convert base64 strings back to ArrayBuffers
   const encryptedBuffer = base64ToArrayBuffer(encryptedData);
   const ivBuffer = base64ToArrayBuffer(iv);
-  
+
   // Decrypt the data
   const decryptedBuffer = await crypto.subtle.decrypt(
     {
@@ -1610,7 +1610,7 @@ async function decryptProps(key: CryptoKey, encryptedData: string, iv: string): 
     key,
     encryptedBuffer
   );
-  
+
   // Convert the decrypted buffer to a string, then parse as JSON
   const decoder = new TextDecoder();
   const jsonData = decoder.decode(decryptedBuffer);
@@ -1660,7 +1660,7 @@ const WRAPPING_KEY_HMAC_KEY = new Uint8Array([
  */
 async function deriveKeyFromToken(tokenStr: string): Promise<CryptoKey> {
   const encoder = new TextEncoder();
-  
+
   // Import the pre-defined HMAC key (already 32 bytes)
   const hmacKey = await crypto.subtle.importKey(
     "raw",
@@ -1669,14 +1669,14 @@ async function deriveKeyFromToken(tokenStr: string): Promise<CryptoKey> {
     false,
     ["sign"]
   );
-  
+
   // Use HMAC-SHA256 to derive the wrapping key material
   const hmacResult = await crypto.subtle.sign(
     "HMAC",
     hmacKey,
     encoder.encode(tokenStr)
   );
-  
+
   // Import the HMAC result as the wrapping key
   return await crypto.subtle.importKey(
     'raw',
@@ -1696,7 +1696,7 @@ async function deriveKeyFromToken(tokenStr: string): Promise<CryptoKey> {
 async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise<string> {
   // Derive a key from the token
   const wrappingKey = await deriveKeyFromToken(tokenStr);
-  
+
   // Wrap the encryption key
   const wrappedKeyBuffer = await crypto.subtle.wrapKey(
     'jwk',
@@ -1704,7 +1704,7 @@ async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise
     wrappingKey,
     { name: 'AES-KW' }
   );
-  
+
   // Convert to base64 for storage
   return arrayBufferToBase64(wrappedKeyBuffer);
 }
@@ -1718,10 +1718,10 @@ async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise
 async function unwrapKeyWithToken(tokenStr: string, wrappedKeyBase64: string): Promise<CryptoKey> {
   // Derive a key from the token
   const wrappingKey = await deriveKeyFromToken(tokenStr);
-  
+
   // Convert base64 wrapped key to ArrayBuffer
   const wrappedKeyBuffer = base64ToArrayBuffer(wrappedKeyBase64);
-  
+
   // Unwrap the key
   return await crypto.subtle.unwrapKey(
     'jwk',
@@ -1810,12 +1810,12 @@ class OAuthHelpersImpl implements OAuthHelpers {
 
     // Generate a symmetric encryption key for props
     const encryptionKey = await generatePropsEncryptionKey();
-    
+
     // Encrypt the props data
     const { encryptedData, iv } = await encryptProps(encryptionKey, options.props);
-    
+
     // No backup of the encryption key - only token holders will be able to decrypt
-    
+
     // Wrap the encryption key with the auth code
     const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
 
