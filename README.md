@@ -84,7 +84,7 @@ const defaultHandler = {
       // `env.OAUTH_PROVIDER.parseAuthRequest()` parses the OAuth authorization request to extract the parameters
       // required by the OAuth 2 standard, namely response_type, client_id, redirect_uri, scope, and
       // state. It returns an object containing all these (using idiomatic camelCase naming).
-      let oauthReqInfo = env.OAUTH_PROVIDER.parseAuthRequest(request);
+      let oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
 
       // `env.OAUTH_PROVIDER.lookupClient()` looks up metadata about the client, as definetd by RFC-7591. This
       // includes things like redirect_uris, client_name, logo_uri, etc.

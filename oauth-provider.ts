@@ -73,7 +73,7 @@ export interface OAuthHelpers {
    * @param request - The HTTP request containing OAuth parameters
    * @returns The parsed authorization request parameters
    */
-  parseAuthRequest(request: Request): AuthRequest;
+  parseAuthRequest(request: Request): Promise<AuthRequest>;
 
   /**
    * Looks up a client by its client ID
@@ -1724,7 +1724,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
    * @param request - The HTTP request containing OAuth parameters
    * @returns The parsed authorization request parameters
    */
-  parseAuthRequest(request: Request): AuthRequest {
+  async parseAuthRequest(request: Request): Promise<AuthRequest> {
     const url = new URL(request.url);
     const responseType = url.searchParams.get('response_type') || '';
     const clientId = url.searchParams.get('client_id') || '';
