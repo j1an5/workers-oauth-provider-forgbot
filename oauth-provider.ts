@@ -1,4 +1,3 @@
-// my-oauth.ts
 import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
@@ -316,9 +315,6 @@ export interface Grant {
    * Encrypted application-specific properties
    */
   encryptedProps: string;
-
-  // No backup of the encryption key is stored
-  // This ensures true end-to-end encryption where only token holders can decrypt
 
   /**
    * Unix timestamp when the grant was created
@@ -1162,8 +1158,6 @@ class OAuthProviderImpl {
     } else if (isPreviousToken && grantData.previousRefreshTokenWrappedKey) {
       wrappedKeyToUse = grantData.previousRefreshTokenWrappedKey;
     } else {
-      // No backup key is available - this is true end-to-end encryption
-      // Only token holders can decrypt the data
       return createErrorResponse(
         'server_error',
         'Encrypted key unavailable for this token'
@@ -1793,8 +1787,6 @@ class OAuthHelpersImpl implements OAuthHelpers {
 
     // Encrypt the props data with a new key generated for this grant
     const { encryptedData, key: encryptionKey } = await encryptProps(options.props);
-
-    // No backup of the encryption key - only token holders will be able to decrypt
 
     // Wrap the encryption key with the auth code
     const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
