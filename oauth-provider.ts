@@ -908,7 +908,7 @@ export class OAuthProvider {
 
     // Get the grant
     const grantKey = `grant:${userId}:${grantId}`;
-    const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+    const grantData: Grant | null = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
     if (!grantData) {
       return createErrorResponse(
@@ -1088,7 +1088,7 @@ export class OAuthProvider {
 
     // Get the associated grant using userId in the key
     const grantKey = `grant:${userId}:${grantId}`;
-    const grantData = await env.OAUTH_KV.get(grantKey, { type: 'json' });
+    const grantData: Grant | null = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
     if (!grantData) {
       return createErrorResponse(
@@ -1335,7 +1335,7 @@ export class OAuthProvider {
 
     // Look up the token record, which now contains the denormalized grant information
     const tokenKey = `token:${userId}:${grantId}:${accessTokenId}`;
-    const tokenData = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
+    const tokenData: Token | null = await env.OAUTH_KV.get(tokenKey, { type: 'json' });
 
     // Verify token
     if (!tokenData) {
@@ -1965,7 +1965,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Fetch all grants in parallel and convert to grant summaries
     const grantSummaries: GrantSummary[] = [];
     const promises = response.keys.map(async (key: { name: string }) => {
-      const grantData = await this.env.OAUTH_KV.get(key.name, { type: 'json' });
+      const grantData: Grant | null = await this.env.OAUTH_KV.get(key.name, { type: 'json' });
       if (grantData) {
         // Create a summary with only the public fields
         const summary: GrantSummary = {
