@@ -1675,7 +1675,7 @@ async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise
 
   // Wrap the encryption key
   const wrappedKeyBuffer = await crypto.subtle.wrapKey(
-    'jwk',
+    'raw',
     keyToWrap,
     wrappingKey,
     { name: 'AES-KW' }
@@ -1700,7 +1700,7 @@ async function unwrapKeyWithToken(tokenStr: string, wrappedKeyBase64: string): P
 
   // Unwrap the key
   return await crypto.subtle.unwrapKey(
-    'jwk',
+    'raw',
     wrappedKeyBuffer,
     wrappingKey,
     { name: 'AES-KW' },
