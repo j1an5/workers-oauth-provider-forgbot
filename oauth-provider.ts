@@ -741,7 +741,7 @@ export class OAuthProvider {
     const tokenEndpoint = this.getFullEndpointUrl(this.options.tokenEndpoint, requestUrl);
     const authorizeEndpoint = this.getFullEndpointUrl(this.options.authorizeEndpoint, requestUrl);
 
-    let registrationEndpoint = undefined;
+    let registrationEndpoint: string | undefined = undefined;
     if (this.options.clientRegistrationEndpoint) {
       registrationEndpoint = this.getFullEndpointUrl(this.options.clientRegistrationEndpoint, requestUrl);
     }
