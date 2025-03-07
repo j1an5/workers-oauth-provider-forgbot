@@ -776,13 +776,24 @@ class OAuthProviderImpl {
       issuer: new URL(tokenEndpoint).origin,
       authorization_endpoint: authorizeEndpoint,
       token_endpoint: tokenEndpoint,
+      // not implemented: jwks_uri
       registration_endpoint: registrationEndpoint,
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
-      response_types_supported: ["code"],
       scopes_supported: this.options.scopesSupported,
+      response_types_supported: ["code"],
       response_modes_supported: ["query"],
+      grant_types_supported: ["authorization_code", "refresh_token"],
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+      // not implemented: token_endpoint_auth_signing_alg_values_supported
+      // not implemented: service_documentation
+      // not implemented: ui_locales_supported
+      // not implemented: op_policy_uri
+      // not implemented: op_tos_uri
       revocation_endpoint: tokenEndpoint, // Reusing token endpoint for revocation
+      // not implemented: revocation_endpoint_auth_methods_supported
+      // not implemented: revocation_endpoint_auth_signing_alg_values_supported
+      // not implemented: introspection_endpoint
+      // not implemented: introspection_endpoint_auth_methods_supported
+      // not implemented: introspection_endpoint_auth_signing_alg_values_supported
       code_challenge_methods_supported: ["plain", "S256"], // PKCE support
     };
 
