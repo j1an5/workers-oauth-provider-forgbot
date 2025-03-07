@@ -822,14 +822,20 @@ class OAuthProviderImpl {
     let contentType = request.headers.get('Content-Type') || '';
     let body: any = {};
 
-    if (contentType.includes('application/json')) {
-      body = await request.json();
-    } else {
-      // Assume application/x-www-form-urlencoded
-      const formData = await request.formData();
-      for (const [key, value] of formData.entries()) {
-        body[key] = value;
-      }
+    // According to OAuth 2.0 RFC 6749 Section 2.3, token requests MUST use 
+    // application/x-www-form-urlencoded content type
+    if (!contentType.includes('application/x-www-form-urlencoded')) {
+      return createErrorResponse(
+        'invalid_request',
+        'Content-Type must be application/x-www-form-urlencoded',
+        400
+      );
+    }
+
+    // Process application/x-www-form-urlencoded
+    const formData = await request.formData();
+    for (const [key, value] of formData.entries()) {
+      body[key] = value;
     }
 
     // Authenticate client
