@@ -1148,15 +1148,10 @@ class OAuthProviderImpl {
 
     // Determine which wrapped key to use for unwrapping
     let wrappedKeyToUse: string;
-    if (isCurrentToken && grantData.refreshTokenWrappedKey) {
-      wrappedKeyToUse = grantData.refreshTokenWrappedKey;
-    } else if (isPreviousToken && grantData.previousRefreshTokenWrappedKey) {
-      wrappedKeyToUse = grantData.previousRefreshTokenWrappedKey;
+    if (isCurrentToken) {
+      wrappedKeyToUse = grantData.refreshTokenWrappedKey!;
     } else {
-      return createErrorResponse(
-        'server_error',
-        'Encrypted key unavailable for this token'
-      );
+      wrappedKeyToUse = grantData.previousRefreshTokenWrappedKey!;
     }
 
     // Unwrap the encryption key using the refresh token
