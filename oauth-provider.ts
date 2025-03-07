@@ -998,7 +998,7 @@ export class OAuthProvider {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        props: grantData.props
+        encryptedProps: grantData.encryptedProps
       }
     };
 
@@ -1139,7 +1139,7 @@ export class OAuthProvider {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        props: grantData.props
+        encryptedProps: grantData.encryptedProps
       }
     };
 
