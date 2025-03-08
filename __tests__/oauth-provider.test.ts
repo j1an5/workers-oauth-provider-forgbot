@@ -80,7 +80,7 @@ class MockKV {
  * Mock execution context for Cloudflare Workers
  */
 class MockExecutionContext implements ExecutionContext {
-  props?: any;
+  props: any = {};
 
   waitUntil(promise: Promise<any>): void {
     // In tests, we can just ignore waitUntil
