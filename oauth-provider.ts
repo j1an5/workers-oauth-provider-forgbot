@@ -560,7 +560,7 @@ class OAuthProviderImpl {
   /**
    * Configuration options for the provider
    */
-  private options: OAuthProviderOptions;
+  options: OAuthProviderOptions;
 
   /**
    * Represents the type of a handler (ExportedHandler or WorkerEntrypoint)
@@ -1986,7 +1986,9 @@ class OAuthHelpersImpl implements OAuthHelpers {
   }
 
   /**
-   * Completes an authorization request by creating a grant and authorization code
+   * Completes an authorization request by creating a grant and either:
+   * - For authorization code flow: generating an authorization code
+   * - For implicit flow: generating an access token directly
    * @param options - Options specifying the grant details
    * @returns A Promise resolving to an object containing the redirect URL
    */
@@ -1994,50 +1996,125 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Generate a unique grant ID
     const grantId = generateRandomString(16);
 
-    // Generate an authorization code with embedded user and grant IDs
-    const authCodeSecret = generateRandomString(32);
-    const authCode = `${options.userId}:${grantId}:${authCodeSecret}`;
-
-    // Hash the authorization code
-    const authCodeId = await hashSecret(authCode);
-
     // Encrypt the props data with a new key generated for this grant
     const { encryptedData, key: encryptionKey } = await encryptProps(options.props);
 
-    // Wrap the encryption key with the auth code
-    const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
+    // Get current timestamp
+    const now = Math.floor(Date.now() / 1000);
 
-    // Store the grant with the auth code hash
-    const grant: Grant = {
-      id: grantId,
-      clientId: options.request.clientId,
-      userId: options.userId,
-      scope: options.scope,
-      metadata: options.metadata,
-      encryptedProps: encryptedData,
-      createdAt: Math.floor(Date.now() / 1000),
-      authCodeId: authCodeId, // Store the auth code hash in the grant
-      authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key
-      // Store PKCE parameters if provided
-      codeChallenge: options.request.codeChallenge,
-      codeChallengeMethod: options.request.codeChallengeMethod
-    };
+    // Check if this is an implicit flow request (response_type=token)
+    if (options.request.responseType === 'token') {
+      // For implicit flow, we skip the authorization code and directly issue an access token
+      const accessTokenSecret = generateRandomString(TOKEN_LENGTH);
+      const accessToken = `${options.userId}:${grantId}:${accessTokenSecret}`;
 
-    // Store the grant with a key that includes the user ID
-    const grantKey = `grant:${options.userId}:${grantId}`;
+      // Generate token ID from the full token string
+      const accessTokenId = await generateTokenId(accessToken);
 
-    // Set 10-minute TTL for the grant (will be extended when code is exchanged)
-    const codeExpiresIn = 600; // 10 minutes
-    await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant), { expirationTtl: codeExpiresIn });
+      // Determine token expiration
+      const accessTokenTTL = this.provider.options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL;
+      const accessTokenExpiresAt = now + accessTokenTTL;
 
-    // Build the redirect URL
-    const redirectUrl = new URL(options.request.redirectUri);
-    redirectUrl.searchParams.set('code', authCode);
-    if (options.request.state) {
-      redirectUrl.searchParams.set('state', options.request.state);
+      // Wrap the encryption key with the access token
+      const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, encryptionKey);
+
+      // Store the grant without an auth code (will be referenced by the access token)
+      const grant: Grant = {
+        id: grantId,
+        clientId: options.request.clientId,
+        userId: options.userId,
+        scope: options.scope,
+        metadata: options.metadata,
+        encryptedProps: encryptedData,
+        createdAt: now
+      };
+
+      // Store the grant with a key that includes the user ID
+      const grantKey = `grant:${options.userId}:${grantId}`;
+      await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant));
+
+      // Store access token with denormalized grant information
+      const accessTokenData: Token = {
+        id: accessTokenId,
+        grantId: grantId,
+        userId: options.userId,
+        createdAt: now,
+        expiresAt: accessTokenExpiresAt,
+        wrappedEncryptionKey: accessTokenWrappedKey,
+        grant: {
+          clientId: options.request.clientId,
+          scope: options.scope,
+          encryptedProps: encryptedData
+        }
+      };
+
+      // Save access token with TTL
+      await this.env.OAUTH_KV.put(
+        `token:${options.userId}:${grantId}:${accessTokenId}`,
+        JSON.stringify(accessTokenData),
+        { expirationTtl: accessTokenTTL }
+      );
+
+      // Build the redirect URL for implicit flow (token in fragment, not query params)
+      const redirectUrl = new URL(options.request.redirectUri);
+      const fragment = new URLSearchParams();
+      fragment.set('access_token', accessToken);
+      fragment.set('token_type', 'bearer');
+      fragment.set('expires_in', accessTokenTTL.toString());
+      fragment.set('scope', options.scope.join(' '));
+
+      if (options.request.state) {
+        fragment.set('state', options.request.state);
+      }
+
+      // Set the fragment (hash) part of the URL
+      redirectUrl.hash = fragment.toString();
+
+      return { redirectTo: redirectUrl.toString() };
+    } else {
+      // Standard authorization code flow
+      // Generate an authorization code with embedded user and grant IDs
+      const authCodeSecret = generateRandomString(32);
+      const authCode = `${options.userId}:${grantId}:${authCodeSecret}`;
+
+      // Hash the authorization code
+      const authCodeId = await hashSecret(authCode);
+
+      // Wrap the encryption key with the auth code
+      const authCodeWrappedKey = await wrapKeyWithToken(authCode, encryptionKey);
+
+      // Store the grant with the auth code hash
+      const grant: Grant = {
+        id: grantId,
+        clientId: options.request.clientId,
+        userId: options.userId,
+        scope: options.scope,
+        metadata: options.metadata,
+        encryptedProps: encryptedData,
+        createdAt: now,
+        authCodeId: authCodeId, // Store the auth code hash in the grant
+        authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key
+        // Store PKCE parameters if provided
+        codeChallenge: options.request.codeChallenge,
+        codeChallengeMethod: options.request.codeChallengeMethod
+      };
+
+      // Store the grant with a key that includes the user ID
+      const grantKey = `grant:${options.userId}:${grantId}`;
+
+      // Set 10-minute TTL for the grant (will be extended when code is exchanged)
+      const codeExpiresIn = 600; // 10 minutes
+      await this.env.OAUTH_KV.put(grantKey, JSON.stringify(grant), { expirationTtl: codeExpiresIn });
+
+      // Build the redirect URL for authorization code flow
+      const redirectUrl = new URL(options.request.redirectUri);
+      redirectUrl.searchParams.set('code', authCode);
+      if (options.request.state) {
+        redirectUrl.searchParams.set('state', options.request.state);
+      }
+
+      return { redirectTo: redirectUrl.toString() };
     }
-
-    return { redirectTo: redirectUrl.toString() };
   }
 
   /**

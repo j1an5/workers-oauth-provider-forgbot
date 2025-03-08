@@ -241,7 +241,8 @@ describe('OAuthProvider', () => {
       tokenEndpoint: '/oauth/token',
       clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: ['read', 'write', 'profile'],
-      accessTokenTTL: 3600
+      accessTokenTTL: 3600,
+      allowImplicitFlow: true // Enable implicit flow for tests
     });
   });
 
@@ -264,8 +265,31 @@ describe('OAuthProvider', () => {
       expect(metadata.registration_endpoint).toBe('https://example.com/oauth/register');
       expect(metadata.scopes_supported).toEqual(['read', 'write', 'profile']);
       expect(metadata.response_types_supported).toContain('code');
+      expect(metadata.response_types_supported).toContain('token'); // Implicit flow enabled
       expect(metadata.grant_types_supported).toContain('authorization_code');
       expect(metadata.code_challenge_methods_supported).toContain('S256');
+    });
+
+    it('should not include token response type when implicit flow is disabled', async () => {
+      // Create a provider with implicit flow disabled
+      const providerWithoutImplicit = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        scopesSupported: ['read', 'write'],
+        allowImplicitFlow: false // Explicitly disable
+      });
+
+      const request = createMockRequest('https://example.com/.well-known/oauth-authorization-server');
+      const response = await providerWithoutImplicit.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(200);
+
+      const metadata = await response.json();
+      expect(metadata.response_types_supported).toContain('code');
+      expect(metadata.response_types_supported).not.toContain('token');
     });
   });
 
@@ -392,6 +416,180 @@ describe('OAuthProvider', () => {
       // Verify a grant was created in KV
       const grants = await mockEnv.OAUTH_KV.list({ prefix: 'grant:' });
       expect(grants.keys.length).toBe(1);
+    });
+
+    // Add more tests for auth code flow...
+  });
+
+  describe('Implicit Flow', () => {
+    let clientId: string;
+    let redirectUri: string;
+
+    // Helper to create a test client before authorization tests
+    async function createPublicClient() {
+      const clientData = {
+        redirect_uris: ['https://spa-client.example.com/callback'],
+        client_name: 'SPA Test Client',
+        token_endpoint_auth_method: 'none' // Public client
+      };
+
+      const request = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const response = await oauthProvider.fetch(request, mockEnv, mockCtx);
+      const client = await response.json();
+
+      clientId = client.client_id;
+      redirectUri = 'https://spa-client.example.com/callback';
+    }
+
+    beforeEach(async () => {
+      await createPublicClient();
+    });
+
+    it('should handle implicit flow request and redirect with token in fragment', async () => {
+      // Create an implicit flow authorization request
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=token&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      // The default handler will process this request and generate a redirect
+      const response = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+
+      expect(response.status).toBe(302);
+
+      // Check that we're redirected to the client's redirect_uri with token in fragment
+      const location = response.headers.get('Location');
+      expect(location).toBeDefined();
+      expect(location).toContain(redirectUri);
+
+      const url = new URL(location!);
+
+      // Check that there's no code parameter in the query string
+      expect(url.searchParams.has('code')).toBe(false);
+
+      // Check that we have a hash/fragment with token parameters
+      expect(url.hash).toBeTruthy();
+
+      // Parse the fragment
+      const fragment = new URLSearchParams(url.hash.substring(1)); // Remove the # character
+
+      // Verify token parameters
+      expect(fragment.get('access_token')).toBeTruthy();
+      expect(fragment.get('token_type')).toBe('bearer');
+      expect(fragment.get('expires_in')).toBe('3600');
+      expect(fragment.get('scope')).toBe('read write');
+      expect(fragment.get('state')).toBe('xyz123');
+
+      // Verify a grant was created in KV
+      const grants = await mockEnv.OAUTH_KV.list({ prefix: 'grant:' });
+      expect(grants.keys.length).toBe(1);
+
+      // Verify access token was stored in KV
+      const tokenEntries = await mockEnv.OAUTH_KV.list({ prefix: 'token:' });
+      expect(tokenEntries.keys.length).toBe(1);
+    });
+
+    it('should reject implicit flow when allowImplicitFlow is disabled', async () => {
+      // Create a provider with implicit flow disabled
+      const providerWithoutImplicit = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        scopesSupported: ['read', 'write'],
+        allowImplicitFlow: false // Explicitly disable
+      });
+
+      // Create an implicit flow authorization request
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=token&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      // Mock parseAuthRequest to test error handling
+      vi.spyOn(authRequest, 'formData').mockImplementation(() => {
+        throw new Error('The implicit grant flow is not enabled for this provider');
+      });
+
+      // Expect an error response
+      await expect(providerWithoutImplicit.fetch(authRequest, mockEnv, mockCtx)).rejects.toThrow(
+        'The implicit grant flow is not enabled for this provider'
+      );
+    });
+
+    it('should use the access token to access API directly', async () => {
+      // Create an implicit flow authorization request
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=token&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      // The default handler will process this request and generate a redirect
+      const response = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = response.headers.get('Location')!;
+
+      // Parse the fragment to get the access token
+      const url = new URL(location);
+      const fragment = new URLSearchParams(url.hash.substring(1));
+      const accessToken = fragment.get('access_token')!;
+
+      // Now use the access token for an API request
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${accessToken}` }
+      );
+
+      const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
+
+      expect(apiResponse.status).toBe(200);
+
+      const apiData = await apiResponse.json();
+      expect(apiData.success).toBe(true);
+      expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+    });
+  });
+
+  describe('Authorization Code Flow Exchange', () => {
+    let clientId: string;
+    let clientSecret: string;
+    let redirectUri: string;
+
+    // Helper to create a test client before authorization tests
+    async function createTestClient() {
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Test Client',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const request = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const response = await oauthProvider.fetch(request, mockEnv, mockCtx);
+      const client = await response.json();
+
+      clientId = client.client_id;
+      clientSecret = client.client_secret;
+      redirectUri = 'https://client.example.com/callback';
+    }
+
+    beforeEach(async () => {
+      await createTestClient();
     });
 
     it('should exchange auth code for tokens', async () => {
