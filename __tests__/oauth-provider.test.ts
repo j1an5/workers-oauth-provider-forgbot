@@ -219,25 +219,6 @@ function createMockEnv() {
   };
 }
 
-// Mock for crypto.subtle.digest to ensure consistent token IDs in tests
-vi.spyOn(crypto.subtle, 'digest').mockImplementation(async (algorithm, data) => {
-  // For testing, we'll just return a predictable hash based on data length
-  // This is not cryptographically secure, but works for tests
-  const array = new Uint8Array(32); // SHA-256 produces 32 bytes
-  const view = new DataView(data);
-
-  // Fill array with a pattern based on input
-  for (let i = 0; i < array.length; i++) {
-    if (i < view.byteLength) {
-      array[i] = view.getUint8(i % view.byteLength);
-    } else {
-      array[i] = i % 256;
-    }
-  }
-
-  return array.buffer;
-});
-
 describe('OAuthProvider', () => {
   let oauthProvider: OAuthProvider;
   let mockEnv: ReturnType<typeof createMockEnv>;
