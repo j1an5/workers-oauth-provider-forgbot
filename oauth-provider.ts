@@ -1518,7 +1518,7 @@ class OAuthProviderImpl {
     };
 
     // Only include client_secret for confidential clients
-    if (clientInfo.clientType === 'confidential' && clientSecret) {
+    if (clientSecret) {
       response.client_secret = clientSecret; // Return the original unhashed secret
     }
 
