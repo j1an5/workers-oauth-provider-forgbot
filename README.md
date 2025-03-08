@@ -65,7 +65,20 @@ export default new OAuthProvider({
   // Optional list of scopes supported by this OAuth provider.
   // If provided, this will be included in the RFC 8414 metadata as 'scopes_supported'.
   // If not provided, the 'scopes_supported' field will be omitted from the metadata.
-  scopesSupported: ["document.read", "document.write", "profile"]
+  scopesSupported: ["document.read", "document.write", "profile"],
+  
+  // Optional: Controls whether the OAuth implicit flow is allowed.
+  // The implicit flow is discouraged in OAuth 2.1 but may be needed for some clients.
+  // Defaults to false.
+  allowImplicitFlow: false,
+  
+  // Optional: Controls whether public clients (clients without a secret, like SPAs) 
+  // can register via the dynamic client registration endpoint.
+  // When true, only confidential clients can register.
+  // Note: Creating public clients via the OAuthHelpers.createClient() method 
+  // is always allowed regardless of this setting.
+  // Defaults to false.
+  disallowPublicClientRegistration: false
 });
 
 // The default handler object - the OAuthProvider will pass through HTTP requests to this object's fetch method

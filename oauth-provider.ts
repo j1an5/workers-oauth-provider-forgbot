@@ -64,6 +64,21 @@ export interface OAuthProviderOptions {
    * If not provided, the 'scopes_supported' field will be omitted from the OAuth metadata.
    */
   scopesSupported?: string[];
+
+  /**
+   * Controls whether the OAuth implicit flow is allowed.
+   * This flow is discouraged in OAuth 2.1 due to security concerns.
+   * Defaults to false.
+   */
+  allowImplicitFlow?: boolean;
+
+  /**
+   * Controls whether public clients (clients without a secret, like SPAs) can register via the
+   * dynamic client registration endpoint. When true, only confidential clients can register.
+   * Note: Creating public clients via the OAuthHelpers.createClient() method is always allowed.
+   * Defaults to false.
+   */
+  disallowPublicClientRegistration?: boolean;
 }
 
 // Using ExportedHandler from Cloudflare Workers Types for both API and default handlers
@@ -193,8 +208,9 @@ export interface ClientInfo {
 
   /**
    * Secret used to authenticate the client (stored as a hash)
+   * Only present for confidential clients; undefined for public clients.
    */
-  clientSecret: string;
+  clientSecret?: string;
 
   /**
    * List of allowed redirect URIs for the client
@@ -250,6 +266,17 @@ export interface ClientInfo {
    * Unix timestamp when the client was registered
    */
   registrationDate?: number;
+
+  /**
+   * The authentication method used by the client at the token endpoint.
+   * Values include:
+   * - 'client_secret_basic': Uses HTTP Basic Auth with client ID and secret (default for confidential clients)
+   * - 'client_secret_post': Uses POST parameters for client authentication
+   * - 'none': Used for public clients that can't securely store secrets (SPAs, mobile apps, etc.)
+   *
+   * Public clients use 'none', while confidential clients use either 'client_secret_basic' or 'client_secret_post'.
+   */
+  tokenEndpointAuthMethod: string;
 }
 
 /**
@@ -772,6 +799,14 @@ class OAuthProviderImpl {
       registrationEndpoint = this.getFullEndpointUrl(this.options.clientRegistrationEndpoint, requestUrl);
     }
 
+    // Determine supported response types
+    const responseTypesSupported = ["code"];
+
+    // Add token response type if implicit flow is allowed
+    if (this.options.allowImplicitFlow) {
+      responseTypesSupported.push("token");
+    }
+
     const metadata = {
       issuer: new URL(tokenEndpoint).origin,
       authorization_endpoint: authorizeEndpoint,
@@ -779,10 +814,11 @@ class OAuthProviderImpl {
       // not implemented: jwks_uri
       registration_endpoint: registrationEndpoint,
       scopes_supported: this.options.scopesSupported,
-      response_types_supported: ["code"],
+      response_types_supported: responseTypesSupported,
       response_modes_supported: ["query"],
       grant_types_supported: ["authorization_code", "refresh_token"],
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post"],
+      // Support "none" auth method for public clients
+      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
       // not implemented: token_endpoint_auth_signing_alg_values_supported
       // not implemented: service_documentation
       // not implemented: ui_locales_supported
@@ -838,7 +874,7 @@ class OAuthProviderImpl {
       body[key] = value;
     }
 
-    // Authenticate client
+    // Get client ID from request
     const authHeader = request.headers.get('Authorization');
     let clientId = '';
     let clientSecret = '';
@@ -848,22 +884,22 @@ class OAuthProviderImpl {
       const credentials = atob(authHeader.substring(6));
       const [id, secret] = credentials.split(':');
       clientId = id;
-      clientSecret = secret;
+      clientSecret = secret || '';
     } else {
       // Form parameters
       clientId = body.client_id;
-      clientSecret = body.client_secret;
+      clientSecret = body.client_secret || '';
     }
 
-    if (!clientId || !clientSecret) {
+    if (!clientId) {
       return createErrorResponse(
         'invalid_client',
-        'Client authentication failed',
+        'Client ID is required',
         401
       );
     }
 
-    // Verify client
+    // Verify client exists
     const clientInfo = await this.getClient(env, clientId);
     if (!clientInfo) {
       return createErrorResponse(
@@ -873,15 +909,38 @@ class OAuthProviderImpl {
       );
     }
 
-    // Hash the provided secret and compare with stored hash
-    const providedSecretHash = await hashSecret(clientSecret);
-    if (providedSecretHash !== clientInfo.clientSecret) {
-      return createErrorResponse(
-        'invalid_client',
-        'Client authentication failed',
-        401
-      );
+    // Determine authentication requirements based on token endpoint auth method
+    const isPublicClient = clientInfo.tokenEndpointAuthMethod === 'none';
+
+    // For confidential clients, validate the secret
+    if (!isPublicClient) {
+      if (!clientSecret) {
+        return createErrorResponse(
+          'invalid_client',
+          'Client authentication failed: missing client_secret',
+          401
+        );
+      }
+
+      // Verify the client secret matches
+      if (!clientInfo.clientSecret) {
+        return createErrorResponse(
+          'invalid_client',
+          'Client authentication failed: client has no registered secret',
+          401
+        );
+      }
+
+      const providedSecretHash = await hashSecret(clientSecret);
+      if (providedSecretHash !== clientInfo.clientSecret) {
+        return createErrorResponse(
+          'invalid_client',
+          'Client authentication failed: invalid client_secret',
+          401
+        );
+      }
     }
+    // For public clients, no secret is required
 
     // Handle different grant types
     const grantType = body.grant_type;
@@ -1323,12 +1382,29 @@ class OAuthProviderImpl {
       return arr;
     };
 
-    // Create client
-    const clientId = generateRandomString(16);
-    const clientSecret = generateRandomString(32);
+    // Get token endpoint auth method, default to client_secret_basic
+    const authMethod = validateStringField(clientMetadata.token_endpoint_auth_method) || 'client_secret_basic';
+    const isPublicClient = authMethod === 'none';
 
-    // Hash the client secret before storing
-    const hashedSecret = await hashSecret(clientSecret);
+    // Check if public client registrations are disallowed
+    if (isPublicClient && this.options.disallowPublicClientRegistration) {
+      return createErrorResponse(
+        'invalid_client_metadata',
+        'Public client registration is not allowed'
+      );
+    }
+
+    // Create client ID
+    const clientId = generateRandomString(16);
+
+    // Only create client secret for confidential clients
+    let clientSecret: string | undefined;
+    let hashedSecret: string | undefined;
+
+    if (!isPublicClient) {
+      clientSecret = generateRandomString(32);
+      hashedSecret = await hashSecret(clientSecret);
+    }
 
     let clientInfo: ClientInfo;
     try {
@@ -1340,7 +1416,6 @@ class OAuthProviderImpl {
 
       clientInfo = {
         clientId,
-        clientSecret: hashedSecret,
         redirectUris,
         clientName: validateStringField(clientMetadata.client_name),
         logoUri: validateStringField(clientMetadata.logo_uri),
@@ -1351,8 +1426,14 @@ class OAuthProviderImpl {
         contacts: validateStringArray(clientMetadata.contacts),
         grantTypes: validateStringArray(clientMetadata.grant_types) || ['authorization_code', 'refresh_token'],
         responseTypes: validateStringArray(clientMetadata.response_types) || ['code'],
-        registrationDate: Math.floor(Date.now() / 1000)
+        registrationDate: Math.floor(Date.now() / 1000),
+        tokenEndpointAuthMethod: authMethod
       };
+
+      // Add client secret only for confidential clients
+      if (!isPublicClient && hashedSecret) {
+        clientInfo.clientSecret = hashedSecret;
+      }
     } catch (error) {
       return createErrorResponse(
         'invalid_client_metadata',
@@ -1364,9 +1445,8 @@ class OAuthProviderImpl {
     await env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(clientInfo));
 
     // Return client information with the original unhashed secret
-    const response = {
+    const response: Record<string, any> = {
       client_id: clientInfo.clientId,
-      client_secret: clientSecret, // Return the original unhashed secret
       redirect_uris: clientInfo.redirectUris,
       client_name: clientInfo.clientName,
       logo_uri: clientInfo.logoUri,
@@ -1377,9 +1457,15 @@ class OAuthProviderImpl {
       contacts: clientInfo.contacts,
       grant_types: clientInfo.grantTypes,
       response_types: clientInfo.responseTypes,
+      token_endpoint_auth_method: clientInfo.tokenEndpointAuthMethod,
       registration_client_uri: `${this.options.clientRegistrationEndpoint}/${clientId}`,
       client_id_issued_at: clientInfo.registrationDate,
     };
+
+    // Only include client_secret for confidential clients
+    if (clientInfo.clientType === 'confidential' && clientSecret) {
+      response.client_secret = clientSecret; // Return the original unhashed secret
+    }
 
     return new Response(JSON.stringify(response), {
       status: 201,
@@ -1819,9 +1905,9 @@ class OAuthHelpersImpl implements OAuthHelpers {
     const codeChallenge = url.searchParams.get('code_challenge') || undefined;
     const codeChallengeMethod = url.searchParams.get('code_challenge_method') || 'plain';
 
-    // OAuth 2.1 does not support the implicit flow ('token' response type)
-    if (responseType === 'token') {
-      throw new Error('The implicit grant flow is not supported in OAuth 2.1');
+    // Check if implicit flow is requested but not allowed
+    if (responseType === 'token' && !this.provider.options.allowImplicitFlow) {
+      throw new Error('The implicit grant flow is not enabled for this provider');
     }
 
     return {
@@ -1906,14 +1992,14 @@ class OAuthHelpersImpl implements OAuthHelpers {
    */
   async createClient(clientInfo: Partial<ClientInfo>): Promise<ClientInfo> {
     const clientId = generateRandomString(16);
-    const clientSecret = generateRandomString(32);
 
-    // Hash the client secret
-    const hashedSecret = await hashSecret(clientSecret);
+    // Determine token endpoint auth method
+    const tokenEndpointAuthMethod = clientInfo.tokenEndpointAuthMethod || 'client_secret_basic';
+    const isPublicClient = tokenEndpointAuthMethod === 'none';
 
+    // Create a new client object
     const newClient: ClientInfo = {
       clientId,
-      clientSecret: hashedSecret, // Store hashed secret
       redirectUris: clientInfo.redirectUris || [],
       clientName: clientInfo.clientName,
       logoUri: clientInfo.logoUri,
@@ -1924,16 +2010,27 @@ class OAuthHelpersImpl implements OAuthHelpers {
       contacts: clientInfo.contacts,
       grantTypes: clientInfo.grantTypes || ['authorization_code', 'refresh_token'],
       responseTypes: clientInfo.responseTypes || ['code'],
-      registrationDate: Math.floor(Date.now() / 1000)
+      registrationDate: Math.floor(Date.now() / 1000),
+      tokenEndpointAuthMethod
     };
+
+    // Only generate and store client secret for confidential clients
+    let clientSecret: string | undefined;
+    if (!isPublicClient) {
+      clientSecret = generateRandomString(32);
+      // Hash the client secret
+      newClient.clientSecret = await hashSecret(clientSecret);
+    }
 
     await this.env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(newClient));
 
-    // Return client with unhashed secret
-    const clientResponse = {
-      ...newClient,
-      clientSecret // Return original unhashed secret
-    };
+    // Create the response object
+    const clientResponse = { ...newClient };
+
+    // Return confidential clients with their unhashed secret
+    if (!isPublicClient && clientSecret) {
+      clientResponse.clientSecret = clientSecret; // Return original unhashed secret
+    }
 
     return clientResponse;
   }
@@ -1991,11 +2088,19 @@ class OAuthHelpersImpl implements OAuthHelpers {
       return null;
     }
 
-    // Handle secret updates - if a new secret is provided, hash it
+    // Determine token endpoint auth method
+    let authMethod = updates.tokenEndpointAuthMethod || client.tokenEndpointAuthMethod || 'client_secret_basic';
+    const isPublicClient = authMethod === 'none';
+
+    // Handle changes in auth method
     let secretToStore = client.clientSecret;
     let originalSecret: string | undefined = undefined;
 
-    if (updates.clientSecret) {
+    if (isPublicClient) {
+      // Public clients don't have secrets
+      secretToStore = undefined;
+    } else if (updates.clientSecret) {
+      // For confidential clients, handle secret updates if provided
       originalSecret = updates.clientSecret;
       secretToStore = await hashSecret(updates.clientSecret);
     }
@@ -2004,20 +2109,27 @@ class OAuthHelpersImpl implements OAuthHelpers {
       ...client,
       ...updates,
       clientId: client.clientId, // Ensure clientId doesn't change
-      clientSecret: secretToStore // Use hashed secret
+      tokenEndpointAuthMethod: authMethod // Use determined auth method
     };
+
+    // Only include client secret for confidential clients
+    if (!isPublicClient && secretToStore) {
+      updatedClient.clientSecret = secretToStore;
+    } else {
+      delete updatedClient.clientSecret;
+    }
 
     await this.env.OAUTH_KV.put(`client:${clientId}`, JSON.stringify(updatedClient));
 
-    // Return client with unhashed secret if a new one was provided
-    if (originalSecret) {
-      return {
-        ...updatedClient,
-        clientSecret: originalSecret
-      };
+    // Create a response object
+    const response = { ...updatedClient };
+
+    // For confidential clients, return unhashed secret if a new one was provided
+    if (!isPublicClient && originalSecret) {
+      response.clientSecret = originalSecret;
     }
 
-    return updatedClient;
+    return response;
   }
 
   /**
