@@ -833,6 +833,13 @@ describe('OAuthProvider', () => {
     });
 
     it('should allow listing, updating, and deleting clients', async () => {
+      // First make a simple request to initialize the OAUTH_PROVIDER in the environment
+      const initRequest = createMockRequest('https://example.com/');
+      await oauthProvider.fetch(initRequest, mockEnv, mockCtx);
+
+      // Now OAUTH_PROVIDER should be initialized
+      expect(mockEnv.OAUTH_PROVIDER).not.toBeNull();
+
       // Create a client
       const client = await mockEnv.OAUTH_PROVIDER.createClient({
         redirectUris: ['https://client.example.com/callback'],
