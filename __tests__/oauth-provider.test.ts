@@ -646,6 +646,119 @@ describe('OAuthProvider', () => {
       expect(grant.refreshTokenId).toBeDefined(); // Refresh token should be added
     });
 
+    it('should reject token exchange without redirect_uri when not using PKCE', async () => {
+      // First get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const url = new URL(location);
+      const code = url.searchParams.get('code')!;
+
+      // Now exchange the code without providing redirect_uri
+      const formData = new MockFormData();
+      formData.append('grant_type', 'authorization_code');
+      formData.append('code', code);
+      // redirect_uri intentionally omitted
+      formData.append('client_id', clientId);
+      formData.append('client_secret', clientSecret);
+
+      // Mock FormData in request
+      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        formData as unknown as FormData
+      );
+
+      const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Should fail because redirect_uri is required when not using PKCE
+      expect(tokenResponse.status).toBe(400);
+      const error = await tokenResponse.json();
+      expect(error.error).toBe('invalid_request');
+      expect(error.error_description).toBe('redirect_uri is required when not using PKCE');
+    });
+
+    // Helper function for PKCE tests
+    function generateRandomString(length: number): string {
+      const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let result = '';
+      const values = new Uint8Array(length);
+      crypto.getRandomValues(values);
+      for (let i = 0; i < length; i++) {
+        result += characters.charAt(values[i] % characters.length);
+      }
+      return result;
+    }
+
+    // Helper function for PKCE tests
+    function base64UrlEncode(str: string): string {
+      return btoa(str)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+    }
+
+    it('should accept token exchange without redirect_uri when using PKCE', async () => {
+      // Generate PKCE code verifier and challenge
+      const codeVerifier = generateRandomString(43); // Recommended length
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const codeChallenge = base64UrlEncode(String.fromCharCode(...hashArray));
+
+      // First get an auth code with PKCE
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123` +
+        `&code_challenge=${codeChallenge}&code_challenge_method=S256`
+      );
+
+      const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const url = new URL(location);
+      const code = url.searchParams.get('code')!;
+
+      // Now exchange the code without providing redirect_uri
+      const formData = new MockFormData();
+      formData.append('grant_type', 'authorization_code');
+      formData.append('code', code);
+      // redirect_uri intentionally omitted
+      formData.append('client_id', clientId);
+      formData.append('client_secret', clientSecret);
+      formData.append('code_verifier', codeVerifier);
+
+      // Mock FormData in request
+      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        formData as unknown as FormData
+      );
+
+      const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Should succeed because redirect_uri is optional when using PKCE
+      expect(tokenResponse.status).toBe(200);
+
+      const tokens = await tokenResponse.json();
+      expect(tokens.access_token).toBeDefined();
+      expect(tokens.refresh_token).toBeDefined();
+      expect(tokens.token_type).toBe('bearer');
+      expect(tokens.expires_in).toBe(3600);
+    });
+
     it('should accept the access token for API requests', async () => {
       // Get an auth code
       const authRequest = createMockRequest(

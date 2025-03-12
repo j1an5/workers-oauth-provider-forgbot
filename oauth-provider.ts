@@ -1036,22 +1036,6 @@ class OAuthProviderImpl {
       );
     }
 
-    // OAuth 2.1 requires redirect_uri parameter
-    if (!redirectUri) {
-      return createErrorResponse(
-        'invalid_request',
-        'redirect_uri is required'
-      );
-    }
-
-    // OAuth 2.1 requires exact match for redirect URIs
-    if (!clientInfo.redirectUris.includes(redirectUri)) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid redirect URI'
-      );
-    }
-
     // Parse the authorization code to extract user ID and grant ID
     const codeParts = code.split(':');
     if (codeParts.length !== 3) {
@@ -1099,8 +1083,27 @@ class OAuthProviderImpl {
       );
     }
 
+    // Check if PKCE is being used
+    const isPkceEnabled = !!grantData.codeChallenge;
+
+    // OAuth 2.1 requires redirect_uri parameter unless PKCE is used
+    if (!redirectUri && !isPkceEnabled) {
+      return createErrorResponse(
+        'invalid_request',
+        'redirect_uri is required when not using PKCE'
+      );
+    }
+
+    // Verify redirect URI if provided
+    if (redirectUri && !clientInfo.redirectUris.includes(redirectUri)) {
+      return createErrorResponse(
+        'invalid_grant',
+        'Invalid redirect URI'
+      );
+    }
+
     // Verify PKCE code_verifier if code_challenge was provided during authorization
-    if (grantData.codeChallenge) {
+    if (isPkceEnabled) {
       if (!codeVerifier) {
         return createErrorResponse(
           'invalid_request',
