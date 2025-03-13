@@ -91,62 +91,6 @@ class MockExecutionContext implements ExecutionContext {
   }
 }
 
-// Mock FormData to enable testing token endpoint
-class MockFormData implements FormData {
-  private data: Map<string, string> = new Map();
-
-  append(name: string, value: string | Blob, filename?: string): void {
-    this.data.set(name, value.toString());
-  }
-
-  delete(name: string): void {
-    this.data.delete(name);
-  }
-
-  get(name: string): FormDataEntryValue | null {
-    return this.data.get(name) || null;
-  }
-
-  getAll(name: string): FormDataEntryValue[] {
-    const value = this.data.get(name);
-    return value ? [value] : [];
-  }
-
-  has(name: string): boolean {
-    return this.data.has(name);
-  }
-
-  set(name: string, value: string | Blob, filename?: string): void {
-    this.data.set(name, value.toString());
-  }
-
-  forEach(callbackfn: (value: FormDataEntryValue, key: string, parent: FormData) => void): void {
-    this.data.forEach((value, key) => callbackfn(value, key, this));
-  }
-
-  *entries(): IterableIterator<[string, FormDataEntryValue]> {
-    for (const [key, value] of this.data.entries()) {
-      yield [key, value];
-    }
-  }
-
-  *keys(): IterableIterator<string> {
-    for (const key of this.data.keys()) {
-      yield key;
-    }
-  }
-
-  *values(): IterableIterator<FormDataEntryValue> {
-    for (const value of this.data.values()) {
-      yield value;
-    }
-  }
-
-  [Symbol.iterator](): IterableIterator<[string, FormDataEntryValue]> {
-    return this.entries();
-  }
-}
-
 // Simple API handler for testing
 class TestApiHandler extends WorkerEntrypoint {
   fetch(request: Request) {
@@ -606,21 +550,20 @@ describe('OAuthProvider', () => {
       const code = url.searchParams.get('code')!;
 
       // Now exchange the code for tokens
-      const formData = new MockFormData();
-      formData.append('grant_type', 'authorization_code');
-      formData.append('code', code);
-      formData.append('redirect_uri', redirectUri);
-      formData.append('client_id', clientId);
-      formData.append('client_secret', clientSecret);
+      // Use URLSearchParams which is proper for application/x-www-form-urlencoded
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
-      // Mock FormData in request
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
-
+      // Use the URLSearchParams object as the body - correctly encoded for Content-Type: application/x-www-form-urlencoded
       const tokenRequest = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData as unknown as FormData
+        params.toString()
       );
 
       const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
@@ -646,6 +589,113 @@ describe('OAuthProvider', () => {
       expect(grant.refreshTokenId).toBeDefined(); // Refresh token should be added
     });
 
+    it('should reject token exchange without redirect_uri when not using PKCE', async () => {
+      // First get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const url = new URL(location);
+      const code = url.searchParams.get('code')!;
+
+      // Now exchange the code without providing redirect_uri
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      // redirect_uri intentionally omitted
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Should fail because redirect_uri is required when not using PKCE
+      expect(tokenResponse.status).toBe(400);
+      const error = await tokenResponse.json();
+      expect(error.error).toBe('invalid_request');
+      expect(error.error_description).toBe('redirect_uri is required when not using PKCE');
+    });
+
+    // Helper function for PKCE tests
+    function generateRandomString(length: number): string {
+      const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      let result = '';
+      const values = new Uint8Array(length);
+      crypto.getRandomValues(values);
+      for (let i = 0; i < length; i++) {
+        result += characters.charAt(values[i] % characters.length);
+      }
+      return result;
+    }
+
+    // Helper function for PKCE tests
+    function base64UrlEncode(str: string): string {
+      return btoa(str)
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=/g, '');
+    }
+
+    it('should accept token exchange without redirect_uri when using PKCE', async () => {
+      // Generate PKCE code verifier and challenge
+      const codeVerifier = generateRandomString(43); // Recommended length
+      const encoder = new TextEncoder();
+      const data = encoder.encode(codeVerifier);
+      const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      const codeChallenge = base64UrlEncode(String.fromCharCode(...hashArray));
+
+      // First get an auth code with PKCE
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123` +
+        `&code_challenge=${codeChallenge}&code_challenge_method=S256`
+      );
+
+      const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const url = new URL(location);
+      const code = url.searchParams.get('code')!;
+
+      // Now exchange the code without providing redirect_uri
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      // redirect_uri intentionally omitted
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+      params.append('code_verifier', codeVerifier);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Should succeed because redirect_uri is optional when using PKCE
+      expect(tokenResponse.status).toBe(200);
+
+      const tokens = await tokenResponse.json();
+      expect(tokens.access_token).toBeDefined();
+      expect(tokens.refresh_token).toBeDefined();
+      expect(tokens.token_type).toBe('bearer');
+      expect(tokens.expires_in).toBe(3600);
+    });
+
     it('should accept the access token for API requests', async () => {
       // Get an auth code
       const authRequest = createMockRequest(
@@ -659,20 +709,18 @@ describe('OAuthProvider', () => {
       const code = new URL(location).searchParams.get('code')!;
 
       // Exchange for tokens
-      const formData = new MockFormData();
-      formData.append('grant_type', 'authorization_code');
-      formData.append('code', code);
-      formData.append('redirect_uri', redirectUri);
-      formData.append('client_id', clientId);
-      formData.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
       const tokenRequest = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData as unknown as FormData
+        params.toString()
       );
 
       const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
@@ -734,20 +782,18 @@ describe('OAuthProvider', () => {
       const code = new URL(location).searchParams.get('code')!;
 
       // Exchange for tokens
-      const formData = new MockFormData();
-      formData.append('grant_type', 'authorization_code');
-      formData.append('code', code);
-      formData.append('redirect_uri', redirectUri);
-      formData.append('client_id', clientId);
-      formData.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
       const tokenRequest = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData as unknown as FormData
+        params.toString()
       );
 
       const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
@@ -761,19 +807,17 @@ describe('OAuthProvider', () => {
 
     it('should issue new tokens with refresh token', async () => {
       // Use the refresh token to get a new access token
-      const formData = new MockFormData();
-      formData.append('grant_type', 'refresh_token');
-      formData.append('refresh_token', refreshToken);
-      formData.append('client_id', clientId);
-      formData.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+      const params = new URLSearchParams();
+      params.append('grant_type', 'refresh_token');
+      params.append('refresh_token', refreshToken);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
       const refreshRequest = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData as unknown as FormData
+        params.toString()
       );
 
       const refreshResponse = await oauthProvider.fetch(refreshRequest, mockEnv, mockCtx);
@@ -800,19 +844,17 @@ describe('OAuthProvider', () => {
 
     it('should allow using the previous refresh token once', async () => {
       // Use the refresh token to get a new access token (first refresh)
-      const formData1 = new MockFormData();
-      formData1.append('grant_type', 'refresh_token');
-      formData1.append('refresh_token', refreshToken);
-      formData1.append('client_id', clientId);
-      formData1.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValueOnce(formData1 as unknown as FormData);
+      const params1 = new URLSearchParams();
+      params1.append('grant_type', 'refresh_token');
+      params1.append('refresh_token', refreshToken);
+      params1.append('client_id', clientId);
+      params1.append('client_secret', clientSecret);
 
       const refreshRequest1 = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData1 as unknown as FormData
+        params1.toString()
       );
 
       const refreshResponse1 = await oauthProvider.fetch(refreshRequest1, mockEnv, mockCtx);
@@ -820,19 +862,17 @@ describe('OAuthProvider', () => {
       const newRefreshToken = newTokens1.refresh_token;
 
       // Now try to use the original refresh token again (simulating a retry after failure)
-      const formData2 = new MockFormData();
-      formData2.append('grant_type', 'refresh_token');
-      formData2.append('refresh_token', refreshToken); // Original token
-      formData2.append('client_id', clientId);
-      formData2.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValueOnce(formData2 as unknown as FormData);
+      const params2 = new URLSearchParams();
+      params2.append('grant_type', 'refresh_token');
+      params2.append('refresh_token', refreshToken); // Original token
+      params2.append('client_id', clientId);
+      params2.append('client_secret', clientSecret);
 
       const refreshRequest2 = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData2 as unknown as FormData
+        params2.toString()
       );
 
       const refreshResponse2 = await oauthProvider.fetch(refreshRequest2, mockEnv, mockCtx);
@@ -892,20 +932,18 @@ describe('OAuthProvider', () => {
       const code = new URL(location).searchParams.get('code')!;
 
       // Exchange for tokens
-      const formData = new MockFormData();
-      formData.append('grant_type', 'authorization_code');
-      formData.append('code', code);
-      formData.append('redirect_uri', redirectUri);
-      formData.append('client_id', clientId);
-      formData.append('client_secret', clientSecret);
-
-      vi.spyOn(Request.prototype, 'formData').mockResolvedValue(formData as unknown as FormData);
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
 
       const tokenRequest = createMockRequest(
         'https://example.com/oauth/token',
         'POST',
         { 'Content-Type': 'application/x-www-form-urlencoded' },
-        formData as unknown as FormData
+        params.toString()
       );
 
       const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
