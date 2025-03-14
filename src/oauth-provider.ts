@@ -1,4 +1,4 @@
-import type { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
+import { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 // Types
@@ -10,6 +10,23 @@ enum HandlerType {
   EXPORTED_HANDLER,
   WORKER_ENTRYPOINT
 }
+
+/**
+ * Discriminated union type for handlers
+ */
+type TypedHandler = {
+  type: HandlerType.EXPORTED_HANDLER,
+  handler: ExportedHandlerWithFetch
+} | {
+  type: HandlerType.WORKER_ENTRYPOINT,
+  handler: new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch
+};
+
+/**
+ * Aliases for either type of Handler that makes .fetch required
+ */
+type ExportedHandlerWithFetch = ExportedHandler & Pick<Required<ExportedHandler>, 'fetch'>
+type WorkerEntrypointWithFetch = WorkerEntrypoint & Pick<Required<WorkerEntrypoint>, 'fetch'>
 
 /**
  * Configuration options for the OAuth Provider
@@ -27,13 +44,13 @@ export interface OAuthProviderOptions {
    * This handler will receive the authenticated user properties in ctx.props.
    * Can be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint.
    */
-  apiHandler: ExportedHandler | (new (ctx: ExecutionContext, env: any) => WorkerEntrypoint);
+  apiHandler: ExportedHandlerWithFetch | (new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch);
 
   /**
    * Handler for all non-API requests or API requests without a valid token.
    * Can be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint.
    */
-  defaultHandler: ExportedHandler | (new (ctx: ExecutionContext, env: any) => WorkerEntrypoint);
+  defaultHandler: ExportedHandler | (new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch);
 
   /**
    * URL of the OAuth authorization endpoint where users can grant permissions.
@@ -563,10 +580,10 @@ class OAuthProviderImpl {
   options: OAuthProviderOptions;
 
   /**
-   * Represents the type of a handler (ExportedHandler or WorkerEntrypoint)
+   * Represents the validated type of a handler (ExportedHandler or WorkerEntrypoint)
    */
-  private apiHandlerType: HandlerType;
-  private defaultHandlerType: HandlerType;
+  private typedApiHandler: TypedHandler
+  private typedDefaultHandler: TypedHandler
 
   /**
    * Creates a new OAuth provider instance
@@ -574,8 +591,8 @@ class OAuthProviderImpl {
    */
   constructor(options: OAuthProviderOptions) {
     // Validate and determine handler types
-    this.apiHandlerType = this.validateHandler(options.apiHandler, 'apiHandler');
-    this.defaultHandlerType = this.validateHandler(options.defaultHandler, 'defaultHandler');
+    this.typedApiHandler = this.validateHandler(options.apiHandler, 'apiHandler');
+    this.typedDefaultHandler = this.validateHandler(options.defaultHandler, 'defaultHandler');
 
     // Validate that the endpoints are either absolute paths or full URLs
     if (Array.isArray(options.apiRoute)) {
@@ -626,15 +643,15 @@ class OAuthProviderImpl {
    * @returns The type of the handler (EXPORTED_HANDLER or WORKER_ENTRYPOINT)
    * @throws TypeError if the handler is invalid
    */
-  private validateHandler(handler: any, name: string): HandlerType {
+  private validateHandler(handler: any, name: string): TypedHandler {
     if (typeof handler === 'object' && handler !== null && typeof handler.fetch === 'function') {
       // It's an ExportedHandler object
-      return HandlerType.EXPORTED_HANDLER;
+      return { type:HandlerType.EXPORTED_HANDLER, handler }
     }
 
     // Check if it's a class constructor extending WorkerEntrypoint
     if (typeof handler === 'function' && handler.prototype instanceof WorkerEntrypoint) {
-      return HandlerType.WORKER_ENTRYPOINT;
+      return { type: HandlerType.WORKER_ENTRYPOINT, handler }
     }
 
     throw new TypeError(`${name} must be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint`);
@@ -704,14 +721,12 @@ class OAuthProviderImpl {
 
     // Call the default handler based on its type
     // Note: We don't add CORS headers to default handler responses
-    if (this.defaultHandlerType === HandlerType.EXPORTED_HANDLER) {
+    if (this.typedDefaultHandler.type === HandlerType.EXPORTED_HANDLER) {
       // It's an object with a fetch method
-      // @ts-ignore
-      return (this.options.defaultHandler! as ExportedHandler).fetch(request, env, ctx);
+      return this.typedDefaultHandler.handler.fetch(request as Parameters<ExportedHandlerWithFetch['fetch']>[0], env, ctx);
     } else {
       // It's a WorkerEntrypoint class - instantiate it with ctx and env in that order
-      const handler = new (this.options.defaultHandler as new (ctx: ExecutionContext, env: any) => WorkerEntrypoint)(ctx, env);
-      // @ts-ignore
+      const handler = new this.typedDefaultHandler.handler(ctx, env);
       return handler.fetch(request);
     }
   }
@@ -1614,14 +1629,12 @@ class OAuthProviderImpl {
     }
 
     // Call the API handler based on its type
-    if (this.apiHandlerType === HandlerType.EXPORTED_HANDLER) {
+    if (this.typedApiHandler.type === HandlerType.EXPORTED_HANDLER) {
       // It's an object with a fetch method
-      // @ts-ignore
-      return (this.options.apiHandler as ExportedHandler).fetch(request, env, ctx);
+      return this.typedApiHandler.handler.fetch(request as Parameters<ExportedHandlerWithFetch['fetch']>[0], env, ctx);
     } else {
       // It's a WorkerEntrypoint class - instantiate it with ctx and env in that order
-      const handler = new (this.options.apiHandler as new (ctx: ExecutionContext, env: any) => WorkerEntrypoint)(ctx, env);
-      // @ts-ignore
+      const handler = new this.typedApiHandler.handler(ctx, env);
       return handler.fetch(request);
     }
   }
