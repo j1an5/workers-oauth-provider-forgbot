@@ -2,6 +2,10 @@
 
 This is a TypeScript library that implements the provider side of the OAuth 2.1 protocol with PKCE support. The library is intended to be used on Cloudflare Workers.
 
+## EXPERIMENTAL
+
+As of March, 2025, this library is very new. Please use with caution as additional security reviews are still in progress.
+
 ## Benefits of this library
 
 * The library acts as a wrapper around your Worker code, which adds authorization for your API endpoints.
@@ -66,16 +70,16 @@ export default new OAuthProvider({
   // If provided, this will be included in the RFC 8414 metadata as 'scopes_supported'.
   // If not provided, the 'scopes_supported' field will be omitted from the metadata.
   scopesSupported: ["document.read", "document.write", "profile"],
-  
+
   // Optional: Controls whether the OAuth implicit flow is allowed.
   // The implicit flow is discouraged in OAuth 2.1 but may be needed for some clients.
   // Defaults to false.
   allowImplicitFlow: false,
-  
-  // Optional: Controls whether public clients (clients without a secret, like SPAs) 
+
+  // Optional: Controls whether public clients (clients without a secret, like SPAs)
   // can register via the dynamic client registration endpoint.
   // When true, only confidential clients can register.
-  // Note: Creating public clients via the OAuthHelpers.createClient() method 
+  // Note: Creating public clients via the OAuthHelpers.createClient() method
   // is always allowed regardless of this setting.
   // Defaults to false.
   disallowPublicClientRegistration: false
@@ -194,9 +198,20 @@ See the `OAuthHelpers` interface definition for full API details.
 
 ## Written by Claude
 
-This library (including the schema documentation) was largely written by Claude, the AI model by Anthropic. Check out the commit history to see how Claude was prompted and what code it produced.
+This library (including the schema documentation) was largely written by [Claude](https://claude.ai), the AI model by Anthropic. Claude's output was thoroughly reviewed by Cloudflare engineers with careful attention paid to security and compliance with standards. Many improvements were made on the initial output, mostly again by prompting Claude (and reviewing the results). Check out the commit history to see how Claude was prompted and what code it produced.
+
+(@kentonv, the lead engineer, was actually an AI skeptic, and started this project with the intent to prove that LLMs cannot code. He ended up deciding he had proven himself wrong.)
 
 ## Implementation Notes
+
+### End-to-end encryption
+
+This library stores records about authorization tokens in KV. The storage schema is carefully designed such that a complete leak of the storage only reveals mundane metadata about what has been granted. In particular:
+
+* Secrets (including access tokens, refresh tokens, authorization codes, and client secrets) are stored only by hash. Hence, such secrets cannot be derived from the storage alone.
+* The `props` associated with a grant (which are passed back to the application when API requests are performed) are stored encrypted with the secret token as key material. Hence, the contents of `props` are impossible to derive from storage unless a valid token is provided.
+
+Note that the `userId` and the `metadata` associated with each grant are not encrypted, because the purpose of these values is to allow grants to be enumerated for audit and revocation purposes. However, these values are completely opaque to the library. An application is free to omit them or apply its own encryption to them before passing them into the library, if it desires.
 
 ### Single-use refresh tokens?
 
