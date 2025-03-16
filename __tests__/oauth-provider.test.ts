@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { OAuthProvider, ClientInfo, AuthRequest, CompleteAuthorizationOptions } from '../oauth-provider';
+import { OAuthProvider, ClientInfo, AuthRequest, CompleteAuthorizationOptions } from '../src/oauth-provider';
 import { ExecutionContext } from '@cloudflare/workers-types';
 // We're importing WorkerEntrypoint from our mock implementation
 // The actual import is mocked in setup.ts
