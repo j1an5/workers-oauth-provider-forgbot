@@ -31,6 +31,56 @@ type WorkerEntrypointWithFetch = WorkerEntrypoint & Pick<Required<WorkerEntrypoi
 /**
  * Configuration options for the OAuth Provider
  */
+/**
+ * Result of a token exchange callback function.
+ * Allows updating the props stored in both the access token and the grant.
+ */
+export interface TokenExchangeCallbackResult {
+  /**
+   * New props to be stored with the access token.
+   * If not provided, the original props will be used.
+   */
+  tokenProps?: any;
+
+  /**
+   * New props to replace the props stored in the grant itself.
+   * If not provided, the original props will be used.
+   */
+  grantProps?: any;
+}
+
+/**
+ * Options for token exchange callback functions
+ */
+export interface TokenExchangeCallbackOptions {
+  /**
+   * The type of grant being processed.
+   * 'authorization_code' for initial code exchange,
+   * 'refresh_token' for refresh token exchange.
+   */
+  grantType: 'authorization_code' | 'refresh_token';
+
+  /**
+   * Client that received this grant
+   */
+  clientId: string;
+
+  /**
+   * User who authorized this grant
+   */
+  userId: string;
+
+  /**
+   * List of scopes that were granted
+   */
+  scope: string[];
+
+  /**
+   * Application-specific properties currently associated with this grant
+   */
+  props: any;
+}
+
 export interface OAuthProviderOptions {
   /**
    * URL(s) for API routes. Requests with URLs starting with any of these prefixes
@@ -96,6 +146,17 @@ export interface OAuthProviderOptions {
    * Defaults to false.
    */
   disallowPublicClientRegistration?: boolean;
+
+  /**
+   * Optional callback function that is called during token exchange.
+   * This allows updating the props stored in both the access token and the grant.
+   * For example, if the application itself is also a client to some other OAuth API,
+   * it may want to perform the equivalent upstream token exchange, and store the result in the props.
+   *
+   * The callback can return new props values that will be stored with the token or grant.
+   * If the callback returns nothing or undefined for a props field, the original props will be used.
+   */
+  tokenExchangeCallback?: (options: TokenExchangeCallbackOptions) => Promise<TokenExchangeCallbackResult | void> | TokenExchangeCallbackResult | void;
 }
 
 // Using ExportedHandler from Cloudflare Workers Types for both API and default handlers
@@ -1168,9 +1229,61 @@ class OAuthProviderImpl {
     // Get the encryption key for props by unwrapping it using the auth code
     const encryptionKey = await unwrapKeyWithToken(code, grantData.authCodeWrappedKey!);
 
-    // Wrap the key for both the new access token and refresh token
-    const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, encryptionKey);
-    const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, encryptionKey);
+    // Default to using the same encryption key and props for both grant and access token
+    let grantEncryptionKey = encryptionKey;
+    let accessTokenEncryptionKey = encryptionKey;
+    let encryptedAccessTokenProps = grantData.encryptedProps;
+
+    // Process token exchange callback if provided
+    if (this.options.tokenExchangeCallback) {
+      // Decrypt the existing props to provide them to the callback
+      const decryptedProps = await decryptProps(encryptionKey, grantData.encryptedProps);
+
+      // Default to using the original props for both grant and token
+      let grantProps = decryptedProps;
+      let accessTokenProps = decryptedProps;
+
+      const callbackOptions: TokenExchangeCallbackOptions = {
+        grantType: 'authorization_code',
+        clientId: clientInfo.clientId,
+        userId: userId,
+        scope: grantData.scope,
+        props: decryptedProps
+      };
+
+      const callbackResult = await Promise.resolve(this.options.tokenExchangeCallback(callbackOptions));
+
+      if (callbackResult) {
+        // Use the returned props if provided, otherwise keep the original props
+        if (callbackResult.tokenProps) {
+          accessTokenProps = callbackResult.tokenProps;
+        }
+
+        if (callbackResult.grantProps) {
+          grantProps = callbackResult.grantProps;
+        }
+      }
+
+      // Re-encrypt the potentially updated grant props
+      const grantResult = await encryptProps(grantProps);
+      grantData.encryptedProps = grantResult.encryptedData;
+      grantEncryptionKey = grantResult.key;
+
+      // Re-encrypt the access token props if they're different from grant props
+      if (accessTokenProps !== grantProps) {
+        const tokenResult = await encryptProps(accessTokenProps);
+        encryptedAccessTokenProps = tokenResult.encryptedData;
+        accessTokenEncryptionKey = tokenResult.key;
+      } else {
+        // If they're the same, use the grant's encrypted data and key
+        encryptedAccessTokenProps = grantData.encryptedProps;
+        accessTokenEncryptionKey = grantEncryptionKey;
+      }
+    }
+
+    // Wrap the keys for the new tokens
+    const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, accessTokenEncryptionKey);
+    const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, grantEncryptionKey);
 
     // Update the grant:
     // - Remove the auth code hash (it's single-use)
@@ -1201,7 +1314,7 @@ class OAuthProviderImpl {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        encryptedProps: grantData.encryptedProps
+        encryptedProps: encryptedAccessTokenProps
       }
     };
 
@@ -1314,9 +1427,61 @@ class OAuthProviderImpl {
     // Unwrap the encryption key using the refresh token
     const encryptionKey = await unwrapKeyWithToken(refreshToken, wrappedKeyToUse);
 
+    // Default to using the same encryption key and props for both grant and access token
+    let grantEncryptionKey = encryptionKey;
+    let accessTokenEncryptionKey = encryptionKey;
+    let encryptedAccessTokenProps = grantData.encryptedProps;
+
+    // Process token exchange callback if provided
+    if (this.options.tokenExchangeCallback) {
+      // Decrypt the existing props to provide them to the callback
+      const decryptedProps = await decryptProps(encryptionKey, grantData.encryptedProps);
+
+      // Default to using the original props for both grant and token
+      let grantProps = decryptedProps;
+      let accessTokenProps = decryptedProps;
+
+      const callbackOptions: TokenExchangeCallbackOptions = {
+        grantType: 'refresh_token',
+        clientId: clientInfo.clientId,
+        userId: userId,
+        scope: grantData.scope,
+        props: decryptedProps
+      };
+
+      const callbackResult = await Promise.resolve(this.options.tokenExchangeCallback(callbackOptions));
+
+      if (callbackResult) {
+        // Use the returned props if provided, otherwise keep the original props
+        if (callbackResult.tokenProps) {
+          accessTokenProps = callbackResult.tokenProps;
+        }
+
+        if (callbackResult.grantProps) {
+          grantProps = callbackResult.grantProps;
+        }
+      }
+
+      // Re-encrypt the potentially updated grant props
+      const grantResult = await encryptProps(grantProps);
+      grantData.encryptedProps = grantResult.encryptedData;
+      grantEncryptionKey = grantResult.key;
+
+      // Re-encrypt the access token props if they're different from grant props
+      if (accessTokenProps !== grantProps) {
+        const tokenResult = await encryptProps(accessTokenProps);
+        encryptedAccessTokenProps = tokenResult.encryptedData;
+        accessTokenEncryptionKey = tokenResult.key;
+      } else {
+        // If they're the same, use the grant's encrypted data and key
+        encryptedAccessTokenProps = grantData.encryptedProps;
+        accessTokenEncryptionKey = grantEncryptionKey;
+      }
+    }
+
     // Wrap the key for both the new access token and refresh token
-    const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, encryptionKey);
-    const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, encryptionKey);
+    const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, accessTokenEncryptionKey);
+    const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, grantEncryptionKey);
 
     // Update the grant with the token rotation information
 
@@ -1351,7 +1516,7 @@ class OAuthProviderImpl {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        encryptedProps: grantData.encryptedProps
+        encryptedProps: encryptedAccessTokenProps
       }
     };
 

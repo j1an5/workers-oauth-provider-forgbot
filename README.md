@@ -196,6 +196,66 @@ The `env.OAUTH_PROVIDER` object available to the fetch handlers provides some me
 
 See the `OAuthHelpers` interface definition for full API details.
 
+## Token Exchange Callback
+
+This library allows you to update the `props` value during token exchanges by configuring a callback function. This is useful for scenarios where the application needs to perform additional processing when tokens are issued or refreshed.
+
+For example, if your application is also a client to some other OAuth API, you might want to perform an equivalent upstream token exchange and store the result in the `props`. The callback can be used to update the props for both the grant record and specific access tokens.
+
+To use this feature, provide a `tokenExchangeCallback` in your OAuthProvider options:
+
+```ts
+new OAuthProvider({
+  // ... other options ...
+  tokenExchangeCallback: async (options) => {
+    // options.grantType is either 'authorization_code' or 'refresh_token'
+    // options.props contains the current props
+    // options.clientId, options.userId, and options.scope are also available
+
+    if (options.grantType === 'authorization_code') {
+      // For authorization code exchange, might want to obtain upstream tokens
+      const upstreamTokens = await exchangeUpstreamToken(options.props.someCode);
+
+      return {
+        // Update the props stored in the access token
+        tokenProps: {
+          ...options.props,
+          upstreamAccessToken: upstreamTokens.access_token
+        },
+        // Update the props stored in the grant (for future token refreshes)
+        grantProps: {
+          ...options.props,
+          upstreamRefreshToken: upstreamTokens.refresh_token
+        }
+      };
+    }
+
+    if (options.grantType === 'refresh_token') {
+      // For refresh token exchanges, might want to refresh upstream tokens too
+      const upstreamTokens = await refreshUpstreamToken(options.props.upstreamRefreshToken);
+
+      return {
+        tokenProps: {
+          ...options.props,
+          upstreamAccessToken: upstreamTokens.access_token
+        },
+        grantProps: {
+          ...options.props,
+          upstreamRefreshToken: upstreamTokens.refresh_token || options.props.upstreamRefreshToken
+        }
+      };
+    }
+  }
+});
+```
+
+The callback can:
+- Return both `tokenProps` and `grantProps` to update both
+- Return only `tokenProps` or `grantProps` to update just one
+- Return nothing to keep the original props unchanged
+
+The `props` values are end-to-end encrypted, so they can safely contain sensitive information.
+
 ## Written by Claude
 
 This library (including the schema documentation) was largely written by [Claude](https://claude.ai), the AI model by Anthropic. Claude's output was thoroughly reviewed by Cloudflare engineers with careful attention paid to security and compliance with standards. Many improvements were made on the initial output, mostly again by prompting Claude (and reviewing the results). Check out the commit history to see how Claude was prompted and what code it produced.
