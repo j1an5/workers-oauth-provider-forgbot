@@ -67,7 +67,7 @@ class MockKV {
 
     return {
       keys,
-      list_complete: true
+      list_complete: true,
     };
   }
 
@@ -98,15 +98,18 @@ class TestApiHandler extends WorkerEntrypoint {
 
     if (url.pathname === '/api/test') {
       // Return authenticated user info from ctx.props
-      return new Response(JSON.stringify({
-        success: true,
-        user: this.ctx.props
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          user: this.ctx.props,
+        }),
+        {
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
     }
 
-    return new Response("Not found", { status: 404 });
+    return new Response('Not found', { status: 404 });
   }
 }
 
@@ -123,17 +126,17 @@ const testDefaultHandler = {
       // Mock user consent flow - automatically grant consent
       const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({
         request: oauthReqInfo,
-        userId: "test-user-123",
+        userId: 'test-user-123',
         metadata: { testConsent: true },
         scope: oauthReqInfo.scope,
-        props: { userId: "test-user-123", username: "TestUser" }
+        props: { userId: 'test-user-123', username: 'TestUser' },
       });
 
       return Response.redirect(redirectTo, 302);
     }
 
-    return new Response("Default handler", { status: 200 });
-  }
+    return new Response('Default handler', { status: 200 });
+  },
 };
 
 // Helper function to create mock requests
@@ -145,7 +148,7 @@ function createMockRequest(
 ): Request {
   const requestInit: RequestInit = {
     method,
-    headers
+    headers,
   };
 
   if (body) {
@@ -159,7 +162,7 @@ function createMockRequest(
 function createMockEnv() {
   return {
     OAUTH_KV: new MockKV(),
-    OAUTH_PROVIDER: null // Will be populated by the OAuthProvider
+    OAUTH_PROVIDER: null, // Will be populated by the OAuthProvider
   };
 }
 
@@ -186,7 +189,7 @@ describe('OAuthProvider', () => {
       clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: ['read', 'write', 'profile'],
       accessTokenTTL: 3600,
-      allowImplicitFlow: true // Enable implicit flow for tests
+      allowImplicitFlow: true, // Enable implicit flow for tests
     });
   });
 
@@ -223,7 +226,7 @@ describe('OAuthProvider', () => {
         authorizeEndpoint: '/authorize',
         tokenEndpoint: '/oauth/token',
         scopesSupported: ['read', 'write'],
-        allowImplicitFlow: false // Explicitly disable
+        allowImplicitFlow: false, // Explicitly disable
       });
 
       const request = createMockRequest('https://example.com/.well-known/oauth-authorization-server');
@@ -242,7 +245,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const request = createMockRequest(
@@ -274,7 +277,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://spa.example.com/callback'],
         client_name: 'SPA Client',
-        token_endpoint_auth_method: 'none'
+        token_endpoint_auth_method: 'none',
       };
 
       const request = createMockRequest(
@@ -310,7 +313,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const request = createMockRequest(
@@ -336,8 +339,8 @@ describe('OAuthProvider', () => {
       // Create an authorization request
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       // The default handler will process this request and generate a redirect
@@ -374,7 +377,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://spa-client.example.com/callback'],
         client_name: 'SPA Test Client',
-        token_endpoint_auth_method: 'none' // Public client
+        token_endpoint_auth_method: 'none', // Public client
       };
 
       const request = createMockRequest(
@@ -399,8 +402,8 @@ describe('OAuthProvider', () => {
       // Create an implicit flow authorization request
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=token&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       // The default handler will process this request and generate a redirect
@@ -449,14 +452,14 @@ describe('OAuthProvider', () => {
         authorizeEndpoint: '/authorize',
         tokenEndpoint: '/oauth/token',
         scopesSupported: ['read', 'write'],
-        allowImplicitFlow: false // Explicitly disable
+        allowImplicitFlow: false, // Explicitly disable
       });
 
       // Create an implicit flow authorization request
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=token&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       // Mock parseAuthRequest to test error handling
@@ -474,8 +477,8 @@ describe('OAuthProvider', () => {
       // Create an implicit flow authorization request
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=token&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       // The default handler will process this request and generate a redirect
@@ -488,11 +491,9 @@ describe('OAuthProvider', () => {
       const accessToken = fragment.get('access_token')!;
 
       // Now use the access token for an API request
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${accessToken}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${accessToken}`,
+      });
 
       const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
 
@@ -500,7 +501,7 @@ describe('OAuthProvider', () => {
 
       const apiData = await apiResponse.json();
       expect(apiData.success).toBe(true);
-      expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+      expect(apiData.user).toEqual({ userId: 'test-user-123', username: 'TestUser' });
     });
   });
 
@@ -514,7 +515,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const request = createMockRequest(
@@ -540,8 +541,8 @@ describe('OAuthProvider', () => {
       // First get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -593,8 +594,8 @@ describe('OAuthProvider', () => {
       // First get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -640,10 +641,7 @@ describe('OAuthProvider', () => {
 
     // Helper function for PKCE tests
     function base64UrlEncode(str: string): string {
-      return btoa(str)
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=/g, '');
+      return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
     }
 
     it('should accept token exchange without redirect_uri when using PKCE', async () => {
@@ -658,9 +656,9 @@ describe('OAuthProvider', () => {
       // First get an auth code with PKCE
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123` +
-        `&code_challenge=${codeChallenge}&code_challenge_method=S256`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123` +
+          `&code_challenge=${codeChallenge}&code_challenge_method=S256`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -700,8 +698,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -727,11 +725,9 @@ describe('OAuthProvider', () => {
       const tokens = await tokenResponse.json();
 
       // Now use the access token for an API request
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${tokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${tokens.access_token}`,
+      });
 
       const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
 
@@ -739,7 +735,7 @@ describe('OAuthProvider', () => {
 
       const apiData = await apiResponse.json();
       expect(apiData.success).toBe(true);
-      expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+      expect(apiData.user).toEqual({ userId: 'test-user-123', username: 'TestUser' });
     });
   });
 
@@ -754,7 +750,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -773,8 +769,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -904,7 +900,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -923,8 +919,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -956,9 +952,7 @@ describe('OAuthProvider', () => {
     });
 
     it('should reject API requests without a token', async () => {
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test'
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test');
 
       const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
 
@@ -969,11 +963,9 @@ describe('OAuthProvider', () => {
     });
 
     it('should reject API requests with an invalid token', async () => {
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': 'Bearer invalid-token' }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: 'Bearer invalid-token',
+      });
 
       const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
 
@@ -984,11 +976,9 @@ describe('OAuthProvider', () => {
     });
 
     it('should accept valid token and pass props to API handler', async () => {
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${accessToken}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${accessToken}`,
+      });
 
       const apiResponse = await oauthProvider.fetch(apiRequest, mockEnv, mockCtx);
 
@@ -996,19 +986,15 @@ describe('OAuthProvider', () => {
 
       const data = await apiResponse.json();
       expect(data.success).toBe(true);
-      expect(data.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+      expect(data.user).toEqual({ userId: 'test-user-123', username: 'TestUser' });
     });
 
     it('should handle CORS preflight for API requests', async () => {
-      const preflightRequest = createMockRequest(
-        'https://example.com/api/test',
-        'OPTIONS',
-        {
-          'Origin': 'https://client.example.com',
-          'Access-Control-Request-Method': 'GET',
-          'Access-Control-Request-Headers': 'Authorization'
-        }
-      );
+      const preflightRequest = createMockRequest('https://example.com/api/test', 'OPTIONS', {
+        Origin: 'https://client.example.com',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'Authorization',
+      });
 
       const preflightResponse = await oauthProvider.fetch(preflightRequest, mockEnv, mockCtx);
 
@@ -1032,7 +1018,7 @@ describe('OAuthProvider', () => {
 
       const tokenExchangeCallback = async (options: any) => {
         // Record that the callback was called and with what arguments
-        callbackInvocations.push({...options});
+        callbackInvocations.push({ ...options });
 
         // Return different props based on the grant type
         if (options.grantType === 'authorization_code') {
@@ -1040,25 +1026,25 @@ describe('OAuthProvider', () => {
             accessTokenProps: {
               ...options.props,
               tokenSpecific: true,
-              tokenUpdatedAt: 'auth_code_flow'
+              tokenUpdatedAt: 'auth_code_flow',
             },
             newProps: {
               ...options.props,
-              grantUpdated: true
-            }
+              grantUpdated: true,
+            },
           };
         } else if (options.grantType === 'refresh_token') {
           return {
             accessTokenProps: {
               ...options.props,
               tokenSpecific: true,
-              tokenUpdatedAt: 'refresh_token_flow'
+              tokenUpdatedAt: 'refresh_token_flow',
             },
             newProps: {
               ...options.props,
               grantUpdated: true,
-              refreshCount: (options.props.refreshCount || 0) + 1
-            }
+              refreshCount: (options.props.refreshCount || 0) + 1,
+            },
           };
         }
       };
@@ -1073,7 +1059,7 @@ describe('OAuthProvider', () => {
         scopesSupported: ['read', 'write', 'profile'],
         accessTokenTTL: 3600,
         allowImplicitFlow: true,
-        tokenExchangeCallback
+        tokenExchangeCallback,
       });
     }
 
@@ -1086,7 +1072,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const request = createMockRequest(
@@ -1128,8 +1114,8 @@ describe('OAuthProvider', () => {
       // First get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProviderWithCallback.fetch(authRequest, mockEnv, mockCtx);
@@ -1168,14 +1154,12 @@ describe('OAuthProvider', () => {
       const callbackArgs = callbackInvocations[0];
       expect(callbackArgs.grantType).toBe('authorization_code');
       expect(callbackArgs.clientId).toBe(clientId);
-      expect(callbackArgs.props).toEqual({ userId: "test-user-123", username: "TestUser" });
+      expect(callbackArgs.props).toEqual({ userId: 'test-user-123', username: 'TestUser' });
 
       // Use the token to access API
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${tokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${tokens.access_token}`,
+      });
 
       const apiResponse = await oauthProviderWithCallback.fetch(apiRequest, mockEnv, mockCtx);
       expect(apiResponse.status).toBe(200);
@@ -1183,10 +1167,10 @@ describe('OAuthProvider', () => {
       // Check that the API received the token-specific props from the callback
       const apiData = await apiResponse.json();
       expect(apiData.user).toEqual({
-        userId: "test-user-123",
-        username: "TestUser",
+        userId: 'test-user-123',
+        username: 'TestUser',
         tokenSpecific: true,
-        tokenUpdatedAt: 'auth_code_flow'
+        tokenUpdatedAt: 'auth_code_flow',
       });
     });
 
@@ -1194,8 +1178,8 @@ describe('OAuthProvider', () => {
       // First get an auth code and exchange it for tokens
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await oauthProviderWithCallback.fetch(authRequest, mockEnv, mockCtx);
@@ -1254,17 +1238,15 @@ describe('OAuthProvider', () => {
 
       // The props are from the updated grant during auth code flow
       expect(callbackArgs.props).toEqual({
-        userId: "test-user-123",
-        username: "TestUser",
-        grantUpdated: true
+        userId: 'test-user-123',
+        username: 'TestUser',
+        grantUpdated: true,
       });
 
       // Use the new token to access API
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${newTokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${newTokens.access_token}`,
+      });
 
       const apiResponse = await oauthProviderWithCallback.fetch(apiRequest, mockEnv, mockCtx);
       expect(apiResponse.status).toBe(200);
@@ -1272,11 +1254,11 @@ describe('OAuthProvider', () => {
       // Check that the API received the token-specific props from the refresh callback
       const apiData = await apiResponse.json();
       expect(apiData.user).toEqual({
-        userId: "test-user-123",
-        username: "TestUser",
+        userId: 'test-user-123',
+        username: 'TestUser',
         grantUpdated: true,
         tokenSpecific: true,
-        tokenUpdatedAt: 'refresh_token_flow'
+        tokenUpdatedAt: 'refresh_token_flow',
       });
 
       // Do a second refresh to verify that grant props are properly updated
@@ -1313,12 +1295,12 @@ describe('OAuthProvider', () => {
             accessTokenProps: {
               ...options.props,
               refreshed: true,
-              tokenOnly: true
+              tokenOnly: true,
             },
             newProps: {
               ...options.props,
-              grantUpdated: true
-            }
+              grantUpdated: true,
+            },
           };
         }
         return undefined;
@@ -1332,14 +1314,14 @@ describe('OAuthProvider', () => {
         tokenEndpoint: '/oauth/token',
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
-        tokenExchangeCallback: differentPropsCallback
+        tokenExchangeCallback: differentPropsCallback,
       });
 
       // Create a client
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Refresh Props Test',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1358,8 +1340,8 @@ describe('OAuthProvider', () => {
       // Get an auth code and exchange it for tokens
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
-        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await refreshPropsProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1401,11 +1383,9 @@ describe('OAuthProvider', () => {
       const newTokens = await refreshResponse.json();
 
       // Use the new token to access API
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${newTokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${newTokens.access_token}`,
+      });
 
       const apiResponse = await refreshPropsProvider.fetch(apiRequest, mockEnv, mockCtx);
       const apiData = await apiResponse.json();
@@ -1424,11 +1404,11 @@ describe('OAuthProvider', () => {
       const propsCallback = async (options: any) => {
         if (options.grantType === 'authorization_code') {
           return {
-            accessTokenProps: { ...options.props, tokenOnly: true }
+            accessTokenProps: { ...options.props, tokenOnly: true },
           };
         } else if (options.grantType === 'refresh_token') {
           return {
-            newProps: { ...options.props, grantOnly: true }
+            newProps: { ...options.props, grantOnly: true },
           };
         }
       };
@@ -1441,14 +1421,14 @@ describe('OAuthProvider', () => {
         tokenEndpoint: '/oauth/token',
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
-        tokenExchangeCallback: propsCallback
+        tokenExchangeCallback: propsCallback,
       });
 
       // Create a client
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Token Props Only Test',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1467,8 +1447,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
-        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await specialProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1493,11 +1473,9 @@ describe('OAuthProvider', () => {
       const tokens = await tokenResponse.json();
 
       // Verify the token has the tokenOnly property when used for API access
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${tokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${tokens.access_token}`,
+      });
 
       const apiResponse = await specialProvider.fetch(apiRequest, mockEnv, mockCtx);
       const apiData = await apiResponse.json();
@@ -1521,11 +1499,9 @@ describe('OAuthProvider', () => {
       const newTokens = await refreshResponse.json();
 
       // Use the new token to access API
-      const api2Request = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${newTokens.access_token}` }
-      );
+      const api2Request = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${newTokens.access_token}`,
+      });
 
       const api2Response = await specialProvider.fetch(api2Request, mockEnv, mockCtx);
       const api2Data = await api2Response.json();
@@ -1533,9 +1509,9 @@ describe('OAuthProvider', () => {
       // With the enhanced implementation, the token props now inherit from grant props
       // when only newProps is returned but accessTokenProps is not specified
       expect(api2Data.user).toEqual({
-        userId: "test-user-123",
-        username: "TestUser",
-        grantOnly: true  // This is now included in the token props
+        userId: 'test-user-123',
+        username: 'TestUser',
+        grantOnly: true, // This is now included in the token props
       });
     });
 
@@ -1546,7 +1522,7 @@ describe('OAuthProvider', () => {
           // Return custom TTL for the access token
           return {
             accessTokenProps: { ...options.props, customTtl: true },
-            accessTokenTTL: 7200 // 2 hours instead of default
+            accessTokenTTL: 7200, // 2 hours instead of default
           };
         }
         return undefined;
@@ -1561,14 +1537,14 @@ describe('OAuthProvider', () => {
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
         accessTokenTTL: 3600, // Default 1 hour
-        tokenExchangeCallback: customTtlCallback
+        tokenExchangeCallback: customTtlCallback,
       });
 
       // Create a client
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Custom TTL Test',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1587,8 +1563,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
-        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await customTtlProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1633,11 +1609,9 @@ describe('OAuthProvider', () => {
       expect(newTokens.expires_in).toBe(7200);
 
       // Verify the token contains our custom property
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${newTokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${newTokens.access_token}`,
+      });
 
       const apiResponse = await customTtlProvider.fetch(apiRequest, mockEnv, mockCtx);
       const apiData = await apiResponse.json();
@@ -1659,14 +1633,14 @@ describe('OAuthProvider', () => {
         tokenEndpoint: '/oauth/token',
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
-        tokenExchangeCallback: noopCallback
+        tokenExchangeCallback: noopCallback,
       });
 
       // Create a client
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Noop Callback Test',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1685,8 +1659,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
-        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await noopProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1711,17 +1685,15 @@ describe('OAuthProvider', () => {
       const tokens = await tokenResponse.json();
 
       // Verify the token has the original props when used for API access
-      const apiRequest = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${tokens.access_token}` }
-      );
+      const apiRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${tokens.access_token}`,
+      });
 
       const apiResponse = await noopProvider.fetch(apiRequest, mockEnv, mockCtx);
       const apiData = await apiResponse.json();
 
       // The props should be the original ones (no change)
-      expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+      expect(apiData.user).toEqual({ userId: 'test-user-123', username: 'TestUser' });
     });
 
     it('should correctly handle the previous refresh token when callback updates grant props', async () => {
@@ -1734,13 +1706,13 @@ describe('OAuthProvider', () => {
         if (options.grantType === 'refresh_token') {
           const updatedProps = {
             ...options.props,
-            updatedCount: (options.props.updatedCount || 0) + 1
+            updatedCount: (options.props.updatedCount || 0) + 1,
           };
 
           // Only return newProps to test that accessTokenProps will inherit from it
           return {
             // Return new props to trigger the re-encryption with a new key
-            newProps: updatedProps
+            newProps: updatedProps,
             // Intentionally not setting accessTokenProps to verify inheritance works
           };
         }
@@ -1755,14 +1727,14 @@ describe('OAuthProvider', () => {
         tokenEndpoint: '/oauth/token',
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
-        tokenExchangeCallback: propUpdatingCallback
+        tokenExchangeCallback: propUpdatingCallback,
       });
 
       // Create a client
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Key-Rewrapping Test',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1781,8 +1753,8 @@ describe('OAuthProvider', () => {
       // Get an auth code
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
-        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       const authResponse = await testProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1834,17 +1806,15 @@ describe('OAuthProvider', () => {
       const newTokens = await refreshResponse.json();
 
       // Get the refresh token's corresponding token data to verify it has the updated props
-      const apiRequest1 = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${newTokens.access_token}` }
-      );
+      const apiRequest1 = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${newTokens.access_token}`,
+      });
 
       const apiResponse1 = await testProvider.fetch(apiRequest1, mockEnv, mockCtx);
       const apiData1 = await apiResponse1.json();
 
       // Print the actual API response to debug
-      console.log("First API response:", JSON.stringify(apiData1));
+      console.log('First API response:', JSON.stringify(apiData1));
 
       // Verify that the token has the updated props (updatedCount should be 1)
       expect(apiData1.user.updatedCount).toBe(1);
@@ -1874,11 +1844,9 @@ describe('OAuthProvider', () => {
       expect(callCount).toBe(1);
 
       // Use the token to access API and verify it has the updated props
-      const apiRequest2 = createMockRequest(
-        'https://example.com/api/test',
-        'GET',
-        { 'Authorization': `Bearer ${secondTokens.access_token}` }
-      );
+      const apiRequest2 = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: `Bearer ${secondTokens.access_token}`,
+      });
 
       const apiResponse2 = await testProvider.fetch(apiRequest2, mockEnv, mockCtx);
       const apiData2 = await apiResponse2.json();
@@ -1894,7 +1862,7 @@ describe('OAuthProvider', () => {
       const clientData = {
         redirect_uris: ['https://client.example.com/callback'],
         client_name: 'Test Client',
-        token_endpoint_auth_method: 'client_secret_basic'
+        token_endpoint_auth_method: 'client_secret_basic',
       };
 
       const registerRequest = createMockRequest(
@@ -1912,8 +1880,8 @@ describe('OAuthProvider', () => {
 
       const authRequest = createMockRequest(
         `https://example.com/authorize?response_type=code&client_id=${clientId}` +
-        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
-        `&scope=read%20write&state=xyz123`
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
       );
 
       await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
@@ -1949,7 +1917,7 @@ describe('OAuthProvider', () => {
       const client = await mockEnv.OAUTH_PROVIDER.createClient({
         redirectUris: ['https://client.example.com/callback'],
         clientName: 'Test Client',
-        tokenEndpointAuthMethod: 'client_secret_basic'
+        tokenEndpointAuthMethod: 'client_secret_basic',
       });
 
       expect(client.clientId).toBeDefined();
@@ -1962,7 +1930,7 @@ describe('OAuthProvider', () => {
 
       // Update client
       const updatedClient = await mockEnv.OAUTH_PROVIDER.updateClient(client.clientId, {
-        clientName: 'Updated Client Name'
+        clientName: 'Updated Client Name',
       });
 
       expect(updatedClient).not.toBeNull();
