@@ -1631,7 +1631,7 @@ describe('OAuthProvider', () => {
 
       // Verify that the TTL is from the callback, not the default
       expect(newTokens.expires_in).toBe(7200);
-      
+
       // Verify the token contains our custom property
       const apiRequest = createMockRequest(
         'https://example.com/api/test',
@@ -1723,7 +1723,7 @@ describe('OAuthProvider', () => {
       // The props should be the original ones (no change)
       expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
     });
-    
+
     it('should correctly handle the previous refresh token when callback updates grant props', async () => {
       // This test verifies fixes for two bugs:
       // 1. previousRefreshTokenWrappedKey not being re-wrapped when grant props change
@@ -1736,7 +1736,7 @@ describe('OAuthProvider', () => {
             ...options.props,
             updatedCount: (options.props.updatedCount || 0) + 1
           };
-          
+
           // Only return newProps to test that accessTokenProps will inherit from it
           return {
             // Return new props to trigger the re-encryption with a new key
@@ -1809,7 +1809,7 @@ describe('OAuthProvider', () => {
 
       // Reset the callback invocations before refresh
       callCount = 0;
-      
+
       // First refresh - this will update the grant props and re-encrypt them with a new key
       const refreshParams = new URLSearchParams();
       refreshParams.append('grant_type', 'refresh_token');
@@ -1826,13 +1826,13 @@ describe('OAuthProvider', () => {
 
       const refreshResponse = await testProvider.fetch(refreshRequest, mockEnv, mockCtx);
       expect(refreshResponse.status).toBe(200);
-      
+
       // The callback should have been called once for the refresh
       expect(callCount).toBe(1);
-      
+
       // Get the new tokens from the first refresh
       const newTokens = await refreshResponse.json();
-      
+
       // Get the refresh token's corresponding token data to verify it has the updated props
       const apiRequest1 = createMockRequest(
         'https://example.com/api/test',
@@ -1842,16 +1842,16 @@ describe('OAuthProvider', () => {
 
       const apiResponse1 = await testProvider.fetch(apiRequest1, mockEnv, mockCtx);
       const apiData1 = await apiResponse1.json();
-      
+
       // Print the actual API response to debug
       console.log("First API response:", JSON.stringify(apiData1));
-      
+
       // Verify that the token has the updated props (updatedCount should be 1)
       expect(apiData1.user.updatedCount).toBe(1);
-      
+
       // Reset callCount before the second refresh
       callCount = 0;
-      
+
       // Now try to use the SAME refresh token again (which should work once due to token rotation)
       // With the bug, this would fail because previousRefreshTokenWrappedKey wasn't re-wrapped with the new key
       const secondRefreshRequest = createMockRequest(
@@ -1862,17 +1862,17 @@ describe('OAuthProvider', () => {
       );
 
       const secondRefreshResponse = await testProvider.fetch(secondRefreshRequest, mockEnv, mockCtx);
-      
-      // With the bug, this would fail with an error. 
+
+      // With the bug, this would fail with an error.
       // When fixed, it should succeed because the previous refresh token is still valid once.
       expect(secondRefreshResponse.status).toBe(200);
-      
+
       const secondTokens = await secondRefreshResponse.json();
       expect(secondTokens.access_token).toBeDefined();
-      
+
       // The callback should have been called again
       expect(callCount).toBe(1);
-      
+
       // Use the token to access API and verify it has the updated props
       const apiRequest2 = createMockRequest(
         'https://example.com/api/test',
@@ -1882,7 +1882,7 @@ describe('OAuthProvider', () => {
 
       const apiResponse2 = await testProvider.fetch(apiRequest2, mockEnv, mockCtx);
       const apiData2 = await apiResponse2.json();
-      
+
       // The updatedCount should be 2 now (incremented again during the second refresh)
       expect(apiData2.user.updatedCount).toBe(2);
     });

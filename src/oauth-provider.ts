@@ -50,7 +50,7 @@ export interface TokenExchangeCallbackResult {
    * If not provided, the original props will be used.
    */
   newProps?: any;
-  
+
   /**
    * Override the default access token TTL (time-to-live) for this specific token.
    * This is especially useful when the application is also an OAuth client to another service
@@ -1235,7 +1235,7 @@ class OAuthProviderImpl {
     const refreshTokenId = await generateTokenId(refreshToken);
 
     const now = Math.floor(Date.now() / 1000);
-    
+
     // Define the access token TTL, may be updated by callback if provided
     let accessTokenTTL = this.options.accessTokenTTL!;
 
@@ -1270,19 +1270,19 @@ class OAuthProviderImpl {
         // Use the returned props if provided, otherwise keep the original props
         if (callbackResult.newProps) {
           grantProps = callbackResult.newProps;
-          
+
           // If accessTokenProps wasn't explicitly specified, use the updated newProps for the token too
           // This ensures token props are updated when only newProps are specified
           if (!callbackResult.accessTokenProps) {
             accessTokenProps = callbackResult.newProps;
           }
         }
-        
+
         // If accessTokenProps was explicitly specified, use those
         if (callbackResult.accessTokenProps) {
           accessTokenProps = callbackResult.accessTokenProps;
         }
-        
+
         // If accessTokenTTL was specified, use that for this token
         if (callbackResult.accessTokenTTL !== undefined) {
           accessTokenTTL = callbackResult.accessTokenTTL;
@@ -1308,7 +1308,7 @@ class OAuthProviderImpl {
 
     // Calculate the access token expiration time (after callback might have updated TTL)
     const accessTokenExpiresAt = now + accessTokenTTL;
-    
+
     // Wrap the keys for the new tokens
     const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, accessTokenEncryptionKey);
     const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, grantEncryptionKey);
@@ -1442,7 +1442,7 @@ class OAuthProviderImpl {
     const newRefreshTokenId = await generateTokenId(newRefreshToken);
 
     const now = Math.floor(Date.now() / 1000);
-    
+
     // Define the access token TTL, may be updated by callback if provided
     let accessTokenTTL = this.options.accessTokenTTL!;
 
@@ -1487,19 +1487,19 @@ class OAuthProviderImpl {
         if (callbackResult.newProps) {
           grantProps = callbackResult.newProps;
           grantPropsChanged = true;
-          
+
           // If accessTokenProps wasn't explicitly specified, use the updated newProps for the token too
           // This ensures token props are updated when only newProps are specified
           if (!callbackResult.accessTokenProps) {
             accessTokenProps = callbackResult.newProps;
           }
         }
-        
+
         // If accessTokenProps was explicitly specified, use those
         if (callbackResult.accessTokenProps) {
           accessTokenProps = callbackResult.accessTokenProps;
         }
-        
+
         // If accessTokenTTL was specified, use that for this token
         if (callbackResult.accessTokenTTL !== undefined) {
           accessTokenTTL = callbackResult.accessTokenTTL;
@@ -1511,7 +1511,7 @@ class OAuthProviderImpl {
         // Re-encrypt the updated grant props
         const grantResult = await encryptProps(grantProps);
         grantData.encryptedProps = grantResult.encryptedData;
-        
+
         // If the encryption key changed, we need to re-wrap the previous token key
         if (grantResult.key !== encryptionKey) {
           grantEncryptionKey = grantResult.key;
@@ -1535,7 +1535,7 @@ class OAuthProviderImpl {
 
     // Calculate the access token expiration time (after callback might have updated TTL)
     const accessTokenExpiresAt = now + accessTokenTTL;
-    
+
     // Wrap the key for both the new access token and refresh token
     const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, accessTokenEncryptionKey);
     const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, grantEncryptionKey);
