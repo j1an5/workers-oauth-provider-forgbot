@@ -1019,6 +1019,875 @@ describe('OAuthProvider', () => {
     });
   });
 
+  describe('Token Exchange Callback', () => {
+    // Test with provider that has token exchange callback
+    let oauthProviderWithCallback: OAuthProvider;
+    let callbackInvocations: any[] = [];
+    let mockEnv: ReturnType<typeof createMockEnv>;
+    let mockCtx: MockExecutionContext;
+
+    // Helper function to create a test OAuth provider with a token exchange callback
+    function createProviderWithCallback() {
+      callbackInvocations = [];
+
+      const tokenExchangeCallback = async (options: any) => {
+        // Record that the callback was called and with what arguments
+        callbackInvocations.push({...options});
+
+        // Return different props based on the grant type
+        if (options.grantType === 'authorization_code') {
+          return {
+            accessTokenProps: {
+              ...options.props,
+              tokenSpecific: true,
+              tokenUpdatedAt: 'auth_code_flow'
+            },
+            newProps: {
+              ...options.props,
+              grantUpdated: true
+            }
+          };
+        } else if (options.grantType === 'refresh_token') {
+          return {
+            accessTokenProps: {
+              ...options.props,
+              tokenSpecific: true,
+              tokenUpdatedAt: 'refresh_token_flow'
+            },
+            newProps: {
+              ...options.props,
+              grantUpdated: true,
+              refreshCount: (options.props.refreshCount || 0) + 1
+            }
+          };
+        }
+      };
+
+      return new OAuthProvider({
+        apiRoute: ['/api/', 'https://api.example.com/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write', 'profile'],
+        accessTokenTTL: 3600,
+        allowImplicitFlow: true,
+        tokenExchangeCallback
+      });
+    }
+
+    let clientId: string;
+    let clientSecret: string;
+    let redirectUri: string;
+
+    // Helper to create a test client
+    async function createTestClient() {
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Test Client',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const request = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const response = await oauthProviderWithCallback.fetch(request, mockEnv, mockCtx);
+      const client = await response.json();
+
+      clientId = client.client_id;
+      clientSecret = client.client_secret;
+      redirectUri = 'https://client.example.com/callback';
+    }
+
+    beforeEach(async () => {
+      // Reset mocks before each test
+      vi.resetAllMocks();
+
+      // Create fresh instances for each test
+      mockEnv = createMockEnv();
+      mockCtx = new MockExecutionContext();
+
+      // Create OAuth provider with test configuration and callback
+      oauthProviderWithCallback = createProviderWithCallback();
+
+      // Create a test client
+      await createTestClient();
+    });
+
+    afterEach(() => {
+      // Clean up KV storage after each test
+      mockEnv.OAUTH_KV.clear();
+    });
+
+    it('should call the callback during authorization code flow', async () => {
+      // First get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await oauthProviderWithCallback.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const code = new URL(location).searchParams.get('code')!;
+
+      // Reset callback invocations tracking before token exchange
+      callbackInvocations = [];
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await oauthProviderWithCallback.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Check that the token exchange was successful
+      expect(tokenResponse.status).toBe(200);
+      const tokens = await tokenResponse.json();
+      expect(tokens.access_token).toBeDefined();
+
+      // Check that the callback was called once
+      expect(callbackInvocations.length).toBe(1);
+
+      // Check that callback was called with correct arguments
+      const callbackArgs = callbackInvocations[0];
+      expect(callbackArgs.grantType).toBe('authorization_code');
+      expect(callbackArgs.clientId).toBe(clientId);
+      expect(callbackArgs.props).toEqual({ userId: "test-user-123", username: "TestUser" });
+
+      // Use the token to access API
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${tokens.access_token}` }
+      );
+
+      const apiResponse = await oauthProviderWithCallback.fetch(apiRequest, mockEnv, mockCtx);
+      expect(apiResponse.status).toBe(200);
+
+      // Check that the API received the token-specific props from the callback
+      const apiData = await apiResponse.json();
+      expect(apiData.user).toEqual({
+        userId: "test-user-123",
+        username: "TestUser",
+        tokenSpecific: true,
+        tokenUpdatedAt: 'auth_code_flow'
+      });
+    });
+
+    it('should call the callback during refresh token flow', async () => {
+      // First get an auth code and exchange it for tokens
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+        `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await oauthProviderWithCallback.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const code = new URL(location).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const codeParams = new URLSearchParams();
+      codeParams.append('grant_type', 'authorization_code');
+      codeParams.append('code', code);
+      codeParams.append('redirect_uri', redirectUri);
+      codeParams.append('client_id', clientId);
+      codeParams.append('client_secret', clientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        codeParams.toString()
+      );
+
+      const tokenResponse = await oauthProviderWithCallback.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Reset the callback invocations tracking before refresh
+      callbackInvocations = [];
+
+      // Now use the refresh token
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', tokens.refresh_token);
+      refreshParams.append('client_id', clientId);
+      refreshParams.append('client_secret', clientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await oauthProviderWithCallback.fetch(refreshRequest, mockEnv, mockCtx);
+
+      // Check that the refresh was successful
+      expect(refreshResponse.status).toBe(200);
+      const newTokens = await refreshResponse.json();
+      expect(newTokens.access_token).toBeDefined();
+
+      // Check that the callback was called once
+      expect(callbackInvocations.length).toBe(1);
+
+      // Check that callback was called with correct arguments
+      const callbackArgs = callbackInvocations[0];
+      expect(callbackArgs.grantType).toBe('refresh_token');
+      expect(callbackArgs.clientId).toBe(clientId);
+
+      // The props are from the updated grant during auth code flow
+      expect(callbackArgs.props).toEqual({
+        userId: "test-user-123",
+        username: "TestUser",
+        grantUpdated: true
+      });
+
+      // Use the new token to access API
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse = await oauthProviderWithCallback.fetch(apiRequest, mockEnv, mockCtx);
+      expect(apiResponse.status).toBe(200);
+
+      // Check that the API received the token-specific props from the refresh callback
+      const apiData = await apiResponse.json();
+      expect(apiData.user).toEqual({
+        userId: "test-user-123",
+        username: "TestUser",
+        grantUpdated: true,
+        tokenSpecific: true,
+        tokenUpdatedAt: 'refresh_token_flow'
+      });
+
+      // Do a second refresh to verify that grant props are properly updated
+      const refresh2Params = new URLSearchParams();
+      refresh2Params.append('grant_type', 'refresh_token');
+      refresh2Params.append('refresh_token', newTokens.refresh_token);
+      refresh2Params.append('client_id', clientId);
+      refresh2Params.append('client_secret', clientSecret);
+
+      // Reset the callback invocations before second refresh
+      callbackInvocations = [];
+
+      const refresh2Request = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refresh2Params.toString()
+      );
+
+      const refresh2Response = await oauthProviderWithCallback.fetch(refresh2Request, mockEnv, mockCtx);
+      const newerTokens = await refresh2Response.json();
+
+      // Check that the refresh count was incremented in the grant props
+      expect(callbackInvocations.length).toBe(1);
+      expect(callbackInvocations[0].props.refreshCount).toBe(1);
+    });
+
+    it('should update token props during refresh when explicitly provided', async () => {
+      // Create a provider with a callback that returns both accessTokenProps and newProps
+      // but with different values for each
+      const differentPropsCallback = async (options: any) => {
+        if (options.grantType === 'refresh_token') {
+          return {
+            accessTokenProps: {
+              ...options.props,
+              refreshed: true,
+              tokenOnly: true
+            },
+            newProps: {
+              ...options.props,
+              grantUpdated: true
+            }
+          };
+        }
+        return undefined;
+      };
+
+      const refreshPropsProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        tokenExchangeCallback: differentPropsCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Refresh Props Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await refreshPropsProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code and exchange it for tokens
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await refreshPropsProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await refreshPropsProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Now do a refresh token exchange
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', tokens.refresh_token);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await refreshPropsProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      const newTokens = await refreshResponse.json();
+
+      // Use the new token to access API
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse = await refreshPropsProvider.fetch(apiRequest, mockEnv, mockCtx);
+      const apiData = await apiResponse.json();
+
+      // The access token should contain the token-specific props from the refresh callback
+      expect(apiData.user).toHaveProperty('refreshed', true);
+      expect(apiData.user).toHaveProperty('tokenOnly', true);
+      expect(apiData.user).not.toHaveProperty('grantUpdated');
+    });
+
+    it('should handle callback that returns only accessTokenProps or only newProps', async () => {
+      // Create a provider with a callback that returns only accessTokenProps for auth code
+      // and only newProps for refresh token
+      // Note: With the enhanced implementation, when only newProps is returned
+      // without accessTokenProps, the token props will inherit from newProps
+      const propsCallback = async (options: any) => {
+        if (options.grantType === 'authorization_code') {
+          return {
+            accessTokenProps: { ...options.props, tokenOnly: true }
+          };
+        } else if (options.grantType === 'refresh_token') {
+          return {
+            newProps: { ...options.props, grantOnly: true }
+          };
+        }
+      };
+
+      const specialProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        tokenExchangeCallback: propsCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Token Props Only Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await specialProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await specialProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await specialProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Verify the token has the tokenOnly property when used for API access
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${tokens.access_token}` }
+      );
+
+      const apiResponse = await specialProvider.fetch(apiRequest, mockEnv, mockCtx);
+      const apiData = await apiResponse.json();
+      expect(apiData.user.tokenOnly).toBe(true);
+
+      // Now do a refresh token exchange
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', tokens.refresh_token);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await specialProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      const newTokens = await refreshResponse.json();
+
+      // Use the new token to access API
+      const api2Request = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const api2Response = await specialProvider.fetch(api2Request, mockEnv, mockCtx);
+      const api2Data = await api2Response.json();
+
+      // With the enhanced implementation, the token props now inherit from grant props
+      // when only newProps is returned but accessTokenProps is not specified
+      expect(api2Data.user).toEqual({
+        userId: "test-user-123",
+        username: "TestUser",
+        grantOnly: true  // This is now included in the token props
+      });
+    });
+
+    it('should allow customizing access token TTL via callback', async () => {
+      // Create a provider with a callback that customizes TTL
+      const customTtlCallback = async (options: any) => {
+        if (options.grantType === 'refresh_token') {
+          // Return custom TTL for the access token
+          return {
+            accessTokenProps: { ...options.props, customTtl: true },
+            accessTokenTTL: 7200 // 2 hours instead of default
+          };
+        }
+        return undefined;
+      };
+
+      const customTtlProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        accessTokenTTL: 3600, // Default 1 hour
+        tokenExchangeCallback: customTtlCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Custom TTL Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await customTtlProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await customTtlProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await customTtlProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Now do a refresh
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', tokens.refresh_token);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await customTtlProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      const newTokens = await refreshResponse.json();
+
+      // Verify that the TTL is from the callback, not the default
+      expect(newTokens.expires_in).toBe(7200);
+
+      // Verify the token contains our custom property
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse = await customTtlProvider.fetch(apiRequest, mockEnv, mockCtx);
+      const apiData = await apiResponse.json();
+      expect(apiData.user.customTtl).toBe(true);
+    });
+
+    it('should handle callback that returns undefined (keeping original props)', async () => {
+      // Create a provider with a callback that returns undefined
+      const noopCallback = async (options: any) => {
+        // Don't return anything, which should keep the original props
+        return undefined;
+      };
+
+      const noopProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        tokenExchangeCallback: noopCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Noop Callback Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await noopProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await noopProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await noopProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Verify the token has the original props when used for API access
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${tokens.access_token}` }
+      );
+
+      const apiResponse = await noopProvider.fetch(apiRequest, mockEnv, mockCtx);
+      const apiData = await apiResponse.json();
+
+      // The props should be the original ones (no change)
+      expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+    });
+
+    it('should correctly handle the previous refresh token when callback updates grant props', async () => {
+      // This test verifies fixes for two bugs:
+      // 1. previousRefreshTokenWrappedKey not being re-wrapped when grant props change
+      // 2. accessTokenProps not inheriting from newProps when only newProps is returned
+      let callCount = 0;
+      const propUpdatingCallback = async (options: any) => {
+        callCount++;
+        if (options.grantType === 'refresh_token') {
+          const updatedProps = {
+            ...options.props,
+            updatedCount: (options.props.updatedCount || 0) + 1
+          };
+
+          // Only return newProps to test that accessTokenProps will inherit from it
+          return {
+            // Return new props to trigger the re-encryption with a new key
+            newProps: updatedProps
+            // Intentionally not setting accessTokenProps to verify inheritance works
+          };
+        }
+        return undefined;
+      };
+
+      const testProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        tokenExchangeCallback: propUpdatingCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Key-Rewrapping Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await testProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await testProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await testProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+      const refreshToken = tokens.refresh_token;
+
+      // Reset the callback invocations before refresh
+      callCount = 0;
+
+      // First refresh - this will update the grant props and re-encrypt them with a new key
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', refreshToken);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await testProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      expect(refreshResponse.status).toBe(200);
+
+      // The callback should have been called once for the refresh
+      expect(callCount).toBe(1);
+
+      // Get the new tokens from the first refresh
+      const newTokens = await refreshResponse.json();
+
+      // Get the refresh token's corresponding token data to verify it has the updated props
+      const apiRequest1 = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse1 = await testProvider.fetch(apiRequest1, mockEnv, mockCtx);
+      const apiData1 = await apiResponse1.json();
+
+      // Print the actual API response to debug
+      console.log("First API response:", JSON.stringify(apiData1));
+
+      // Verify that the token has the updated props (updatedCount should be 1)
+      expect(apiData1.user.updatedCount).toBe(1);
+
+      // Reset callCount before the second refresh
+      callCount = 0;
+
+      // Now try to use the SAME refresh token again (which should work once due to token rotation)
+      // With the bug, this would fail because previousRefreshTokenWrappedKey wasn't re-wrapped with the new key
+      const secondRefreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString() // Using same params with the same refresh token
+      );
+
+      const secondRefreshResponse = await testProvider.fetch(secondRefreshRequest, mockEnv, mockCtx);
+
+      // With the bug, this would fail with an error.
+      // When fixed, it should succeed because the previous refresh token is still valid once.
+      expect(secondRefreshResponse.status).toBe(200);
+
+      const secondTokens = await secondRefreshResponse.json();
+      expect(secondTokens.access_token).toBeDefined();
+
+      // The callback should have been called again
+      expect(callCount).toBe(1);
+
+      // Use the token to access API and verify it has the updated props
+      const apiRequest2 = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${secondTokens.access_token}` }
+      );
+
+      const apiResponse2 = await testProvider.fetch(apiRequest2, mockEnv, mockCtx);
+      const apiData2 = await apiResponse2.json();
+
+      // The updatedCount should be 2 now (incremented again during the second refresh)
+      expect(apiData2.user.updatedCount).toBe(2);
+    });
+  });
+
   describe('OAuthHelpers', () => {
     it('should allow listing and revoking grants', async () => {
       // Create a client
