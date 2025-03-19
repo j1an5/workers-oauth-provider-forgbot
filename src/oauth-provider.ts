@@ -1234,8 +1234,6 @@ class OAuthProviderImpl {
     const accessTokenId = await generateTokenId(accessToken);
     const refreshTokenId = await generateTokenId(refreshToken);
 
-    const now = Math.floor(Date.now() / 1000);
-
     // Define the access token TTL, may be updated by callback if provided
     let accessTokenTTL = this.options.accessTokenTTL!;
 
@@ -1307,6 +1305,7 @@ class OAuthProviderImpl {
     }
 
     // Calculate the access token expiration time (after callback might have updated TTL)
+    const now = Math.floor(Date.now() / 1000);
     const accessTokenExpiresAt = now + accessTokenTTL;
 
     // Wrap the keys for the new tokens
@@ -1441,8 +1440,6 @@ class OAuthProviderImpl {
     const newRefreshToken = `${userId}:${grantId}:${refreshTokenSecret}`;
     const newRefreshTokenId = await generateTokenId(newRefreshToken);
 
-    const now = Math.floor(Date.now() / 1000);
-
     // Define the access token TTL, may be updated by callback if provided
     let accessTokenTTL = this.options.accessTokenTTL!;
 
@@ -1534,6 +1531,7 @@ class OAuthProviderImpl {
     }
 
     // Calculate the access token expiration time (after callback might have updated TTL)
+    const now = Math.floor(Date.now() / 1000);
     const accessTokenExpiresAt = now + accessTokenTTL;
 
     // Wrap the key for both the new access token and refresh token
