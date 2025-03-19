@@ -1539,6 +1539,111 @@ describe('OAuthProvider', () => {
       });
     });
 
+    it('should allow customizing access token TTL via callback', async () => {
+      // Create a provider with a callback that customizes TTL
+      const customTtlCallback = async (options: any) => {
+        if (options.grantType === 'refresh_token') {
+          // Return custom TTL for the access token
+          return {
+            accessTokenProps: { ...options.props, customTtl: true },
+            accessTokenTTL: 7200 // 2 hours instead of default
+          };
+        }
+        return undefined;
+      };
+
+      const customTtlProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        accessTokenTTL: 3600, // Default 1 hour
+        tokenExchangeCallback: customTtlCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Custom TTL Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await customTtlProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await customTtlProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await customTtlProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+
+      // Now do a refresh
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', tokens.refresh_token);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await customTtlProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      const newTokens = await refreshResponse.json();
+
+      // Verify that the TTL is from the callback, not the default
+      expect(newTokens.expires_in).toBe(7200);
+      
+      // Verify the token contains our custom property
+      const apiRequest = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse = await customTtlProvider.fetch(apiRequest, mockEnv, mockCtx);
+      const apiData = await apiResponse.json();
+      expect(apiData.user.customTtl).toBe(true);
+    });
+
     it('should handle callback that returns undefined (keeping original props)', async () => {
       // Create a provider with a callback that returns undefined
       const noopCallback = async (options: any) => {

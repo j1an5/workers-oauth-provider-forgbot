@@ -50,6 +50,14 @@ export interface TokenExchangeCallbackResult {
    * If not provided, the original props will be used.
    */
   newProps?: any;
+  
+  /**
+   * Override the default access token TTL (time-to-live) for this specific token.
+   * This is especially useful when the application is also an OAuth client to another service
+   * and wants to match its access token TTL to the upstream access token TTL.
+   * Value should be in seconds.
+   */
+  accessTokenTTL?: number;
 }
 
 /**
@@ -1227,7 +1235,9 @@ class OAuthProviderImpl {
     const refreshTokenId = await generateTokenId(refreshToken);
 
     const now = Math.floor(Date.now() / 1000);
-    const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
+    
+    // Define the access token TTL, may be updated by callback if provided
+    let accessTokenTTL = this.options.accessTokenTTL!;
 
     // Get the encryption key for props by unwrapping it using the auth code
     const encryptionKey = await unwrapKeyWithToken(code, grantData.authCodeWrappedKey!);
@@ -1272,6 +1282,11 @@ class OAuthProviderImpl {
         if (callbackResult.accessTokenProps) {
           accessTokenProps = callbackResult.accessTokenProps;
         }
+        
+        // If accessTokenTTL was specified, use that for this token
+        if (callbackResult.accessTokenTTL !== undefined) {
+          accessTokenTTL = callbackResult.accessTokenTTL;
+        }
       }
 
       // Re-encrypt the potentially updated grant props
@@ -1291,6 +1306,9 @@ class OAuthProviderImpl {
       }
     }
 
+    // Calculate the access token expiration time (after callback might have updated TTL)
+    const accessTokenExpiresAt = now + accessTokenTTL;
+    
     // Wrap the keys for the new tokens
     const accessTokenWrappedKey = await wrapKeyWithToken(accessToken, accessTokenEncryptionKey);
     const refreshTokenWrappedKey = await wrapKeyWithToken(refreshToken, grantEncryptionKey);
@@ -1328,18 +1346,18 @@ class OAuthProviderImpl {
       }
     };
 
-    // Save access token with TTL
+    // Save access token with TTL (using the potentially callback-provided TTL)
     await env.OAUTH_KV.put(
       `token:${userId}:${grantId}:${accessTokenId}`,
       JSON.stringify(accessTokenData),
-      { expirationTtl: this.options.accessTokenTTL }
+      { expirationTtl: accessTokenTTL }
     );
 
     // Return the tokens
     return new Response(JSON.stringify({
       access_token: accessToken,
       token_type: 'bearer',
-      expires_in: this.options.accessTokenTTL,
+      expires_in: accessTokenTTL,
       refresh_token: refreshToken,
       scope: grantData.scope.join(' ')
     }), {
@@ -1424,7 +1442,9 @@ class OAuthProviderImpl {
     const newRefreshTokenId = await generateTokenId(newRefreshToken);
 
     const now = Math.floor(Date.now() / 1000);
-    const accessTokenExpiresAt = now + this.options.accessTokenTTL!;
+    
+    // Define the access token TTL, may be updated by callback if provided
+    let accessTokenTTL = this.options.accessTokenTTL!;
 
     // Determine which wrapped key to use for unwrapping
     let wrappedKeyToUse: string;
@@ -1479,6 +1499,11 @@ class OAuthProviderImpl {
         if (callbackResult.accessTokenProps) {
           accessTokenProps = callbackResult.accessTokenProps;
         }
+        
+        // If accessTokenTTL was specified, use that for this token
+        if (callbackResult.accessTokenTTL !== undefined) {
+          accessTokenTTL = callbackResult.accessTokenTTL;
+        }
       }
 
       // Only re-encrypt the grant props if they've changed
@@ -1508,6 +1533,9 @@ class OAuthProviderImpl {
       }
     }
 
+    // Calculate the access token expiration time (after callback might have updated TTL)
+    const accessTokenExpiresAt = now + accessTokenTTL;
+    
     // Wrap the key for both the new access token and refresh token
     const accessTokenWrappedKey = await wrapKeyWithToken(newAccessToken, accessTokenEncryptionKey);
     const newRefreshTokenWrappedKey = await wrapKeyWithToken(newRefreshToken, grantEncryptionKey);
@@ -1549,18 +1577,18 @@ class OAuthProviderImpl {
       }
     };
 
-    // Save access token with TTL
+    // Save access token with TTL (using the potentially callback-provided TTL)
     await env.OAUTH_KV.put(
       `token:${userId}:${grantId}:${accessTokenId}`,
       JSON.stringify(accessTokenData),
-      { expirationTtl: this.options.accessTokenTTL }
+      { expirationTtl: accessTokenTTL }
     );
 
     // Return the new access token and refresh token
     return new Response(JSON.stringify({
       access_token: newAccessToken,
       token_type: 'bearer',
-      expires_in: this.options.accessTokenTTL,
+      expires_in: accessTokenTTL,
       refresh_token: newRefreshToken,
       scope: grantData.scope.join(' ')
     }), {

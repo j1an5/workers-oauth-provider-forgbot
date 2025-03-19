@@ -242,7 +242,9 @@ new OAuthProvider({
         newProps: {
           ...options.props,
           upstreamRefreshToken: upstreamTokens.refresh_token || options.props.upstreamRefreshToken
-        }
+        },
+        // Optionally override the default access token TTL to match the upstream token
+        accessTokenTTL: upstreamTokens.expires_in
       };
     }
   }
@@ -253,7 +255,10 @@ The callback can:
 - Return both `accessTokenProps` and `newProps` to update both
 - Return only `accessTokenProps` to update just the current access token
 - Return only `newProps` to update both the grant and access token (the access token inherits these props)
+- Return `accessTokenTTL` to override the default TTL for this specific access token
 - Return nothing to keep the original props unchanged
+
+The `accessTokenTTL` override is particularly useful when the application is also an OAuth client to another service and wants to match its access token TTL to the upstream access token TTL. This helps prevent situations where the downstream token is still valid but the upstream token has expired.
 
 The `props` values are end-to-end encrypted, so they can safely contain sensitive information.
 
