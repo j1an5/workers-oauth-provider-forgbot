@@ -1419,6 +1419,8 @@ describe('OAuthProvider', () => {
     it('should handle callback that returns only tokenProps or only grantProps', async () => {
       // Create a provider with a callback that returns only tokenProps for auth code
       // and only grantProps for refresh token
+      // Note: With the enhanced implementation, when only grantProps is returned
+      // without tokenProps, the token props will inherit from grantProps
       const tokenPropsOnlyCallback = async (options: any) => {
         if (options.grantType === 'authorization_code') {
           return {
@@ -1528,11 +1530,12 @@ describe('OAuthProvider', () => {
       const api2Response = await specialProvider.fetch(api2Request, mockEnv, mockCtx);
       const api2Data = await api2Response.json();
 
-      // The token should have the same props as the original token
-      // because we only updated grantProps, not tokenProps during the refresh
+      // With the enhanced implementation, the token props now inherit from grant props
+      // when only grantProps is returned but tokenProps is not specified
       expect(api2Data.user).toEqual({
         userId: "test-user-123",
-        username: "TestUser"
+        username: "TestUser",
+        grantOnly: true  // This is now included in the token props
       });
     });
 
@@ -1614,6 +1617,169 @@ describe('OAuthProvider', () => {
 
       // The props should be the original ones (no change)
       expect(apiData.user).toEqual({ userId: "test-user-123", username: "TestUser" });
+    });
+    
+    it('should correctly handle the previous refresh token when callback updates grant props', async () => {
+      // This test verifies fixes for two bugs:
+      // 1. previousRefreshTokenWrappedKey not being re-wrapped when grant props change
+      // 2. tokenProps not inheriting from grantProps when only grantProps is returned
+      let callCount = 0;
+      const propUpdatingCallback = async (options: any) => {
+        callCount++;
+        if (options.grantType === 'refresh_token') {
+          const updatedProps = {
+            ...options.props,
+            updatedCount: (options.props.updatedCount || 0) + 1
+          };
+          
+          // Only return grantProps to test that tokenProps will inherit from it
+          return {
+            // Return new grant props to trigger the re-encryption with a new key
+            grantProps: updatedProps
+            // Intentionally not setting tokenProps to verify inheritance works
+          };
+        }
+        return undefined;
+      };
+
+      const testProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        clientRegistrationEndpoint: '/oauth/register',
+        scopesSupported: ['read', 'write'],
+        tokenExchangeCallback: propUpdatingCallback
+      });
+
+      // Create a client
+      const clientData = {
+        redirect_uris: ['https://client.example.com/callback'],
+        client_name: 'Key-Rewrapping Test',
+        token_endpoint_auth_method: 'client_secret_basic'
+      };
+
+      const registerRequest = createMockRequest(
+        'https://example.com/oauth/register',
+        'POST',
+        { 'Content-Type': 'application/json' },
+        JSON.stringify(clientData)
+      );
+
+      const registerResponse = await testProvider.fetch(registerRequest, mockEnv, mockCtx);
+      const client = await registerResponse.json();
+      const testClientId = client.client_id;
+      const testClientSecret = client.client_secret;
+      const testRedirectUri = 'https://client.example.com/callback';
+
+      // Get an auth code
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${testClientId}` +
+        `&redirect_uri=${encodeURIComponent(testRedirectUri)}` +
+        `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await testProvider.fetch(authRequest, mockEnv, mockCtx);
+      const code = new URL(authResponse.headers.get('Location')!).searchParams.get('code')!;
+
+      // Exchange code for tokens
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', testRedirectUri);
+      params.append('client_id', testClientId);
+      params.append('client_secret', testClientSecret);
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await testProvider.fetch(tokenRequest, mockEnv, mockCtx);
+      const tokens = await tokenResponse.json();
+      const refreshToken = tokens.refresh_token;
+
+      // Reset the callback invocations before refresh
+      callCount = 0;
+      
+      // First refresh - this will update the grant props and re-encrypt them with a new key
+      const refreshParams = new URLSearchParams();
+      refreshParams.append('grant_type', 'refresh_token');
+      refreshParams.append('refresh_token', refreshToken);
+      refreshParams.append('client_id', testClientId);
+      refreshParams.append('client_secret', testClientSecret);
+
+      const refreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString()
+      );
+
+      const refreshResponse = await testProvider.fetch(refreshRequest, mockEnv, mockCtx);
+      expect(refreshResponse.status).toBe(200);
+      
+      // The callback should have been called once for the refresh
+      expect(callCount).toBe(1);
+      
+      // Get the new tokens from the first refresh
+      const newTokens = await refreshResponse.json();
+      
+      // Get the refresh token's corresponding token data to verify it has the updated props
+      const apiRequest1 = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${newTokens.access_token}` }
+      );
+
+      const apiResponse1 = await testProvider.fetch(apiRequest1, mockEnv, mockCtx);
+      const apiData1 = await apiResponse1.json();
+      
+      // Print the actual API response to debug
+      console.log("First API response:", JSON.stringify(apiData1));
+      
+      // Verify that the token has the updated props (updatedCount should be 1)
+      expect(apiData1.user.updatedCount).toBe(1);
+      
+      // Reset callCount before the second refresh
+      callCount = 0;
+      
+      // Now try to use the SAME refresh token again (which should work once due to token rotation)
+      // With the bug, this would fail because previousRefreshTokenWrappedKey wasn't re-wrapped with the new key
+      const secondRefreshRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        refreshParams.toString() // Using same params with the same refresh token
+      );
+
+      const secondRefreshResponse = await testProvider.fetch(secondRefreshRequest, mockEnv, mockCtx);
+      
+      // With the bug, this would fail with an error. 
+      // When fixed, it should succeed because the previous refresh token is still valid once.
+      expect(secondRefreshResponse.status).toBe(200);
+      
+      const secondTokens = await secondRefreshResponse.json();
+      expect(secondTokens.access_token).toBeDefined();
+      
+      // The callback should have been called again
+      expect(callCount).toBe(1);
+      
+      // Use the token to access API and verify it has the updated props
+      const apiRequest2 = createMockRequest(
+        'https://example.com/api/test',
+        'GET',
+        { 'Authorization': `Bearer ${secondTokens.access_token}` }
+      );
+
+      const apiResponse2 = await testProvider.fetch(apiRequest2, mockEnv, mockCtx);
+      const apiData2 = await apiResponse2.json();
+      
+      // The updatedCount should be 2 now (incremented again during the second refresh)
+      expect(apiData2.user.updatedCount).toBe(2);
     });
   });
 

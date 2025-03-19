@@ -1255,12 +1255,19 @@ class OAuthProviderImpl {
 
       if (callbackResult) {
         // Use the returned props if provided, otherwise keep the original props
-        if (callbackResult.tokenProps) {
-          accessTokenProps = callbackResult.tokenProps;
-        }
-
         if (callbackResult.grantProps) {
           grantProps = callbackResult.grantProps;
+          
+          // If tokenProps wasn't explicitly specified, use the updated grantProps for the token too
+          // This ensures token props are updated when only grant props are specified
+          if (!callbackResult.tokenProps) {
+            accessTokenProps = callbackResult.grantProps;
+          }
+        }
+        
+        // If tokenProps was explicitly specified, use those
+        if (callbackResult.tokenProps) {
+          accessTokenProps = callbackResult.tokenProps;
         }
       }
 
@@ -1451,21 +1458,40 @@ class OAuthProviderImpl {
 
       const callbackResult = await Promise.resolve(this.options.tokenExchangeCallback(callbackOptions));
 
+      let grantPropsChanged = false;
       if (callbackResult) {
         // Use the returned props if provided, otherwise keep the original props
+        if (callbackResult.grantProps) {
+          grantProps = callbackResult.grantProps;
+          grantPropsChanged = true;
+          
+          // If tokenProps wasn't explicitly specified, use the updated grantProps for the token too
+          // This ensures token props are updated when only grant props are specified
+          if (!callbackResult.tokenProps) {
+            accessTokenProps = callbackResult.grantProps;
+          }
+        }
+        
+        // If tokenProps was explicitly specified, use those
         if (callbackResult.tokenProps) {
           accessTokenProps = callbackResult.tokenProps;
         }
-
-        if (callbackResult.grantProps) {
-          grantProps = callbackResult.grantProps;
-        }
       }
 
-      // Re-encrypt the potentially updated grant props
-      const grantResult = await encryptProps(grantProps);
-      grantData.encryptedProps = grantResult.encryptedData;
-      grantEncryptionKey = grantResult.key;
+      // Only re-encrypt the grant props if they've changed
+      if (grantPropsChanged) {
+        // Re-encrypt the updated grant props
+        const grantResult = await encryptProps(grantProps);
+        grantData.encryptedProps = grantResult.encryptedData;
+        
+        // If the encryption key changed, we need to re-wrap the previous token key
+        if (grantResult.key !== encryptionKey) {
+          grantEncryptionKey = grantResult.key;
+          wrappedKeyToUse = await wrapKeyWithToken(refreshToken, grantEncryptionKey);
+        } else {
+          grantEncryptionKey = grantResult.key;
+        }
+      }
 
       // Re-encrypt the access token props if they're different from grant props
       if (accessTokenProps !== grantProps) {
