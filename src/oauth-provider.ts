@@ -37,16 +37,19 @@ type WorkerEntrypointWithFetch = WorkerEntrypoint & Pick<Required<WorkerEntrypoi
  */
 export interface TokenExchangeCallbackResult {
   /**
-   * New props to be stored with the access token.
-   * If not provided, the original props will be used.
+   * New props to be stored specifically with the access token.
+   * If not provided but newProps is, the access token will use newProps.
+   * If neither is provided, the original props will be used.
    */
-  tokenProps?: any;
+  accessTokenProps?: any;
 
   /**
    * New props to replace the props stored in the grant itself.
+   * These props will be used for all future token refreshes.
+   * If accessTokenProps is not provided, these props will also be used for the current access token.
    * If not provided, the original props will be used.
    */
-  grantProps?: any;
+  newProps?: any;
 }
 
 /**
@@ -1255,19 +1258,19 @@ class OAuthProviderImpl {
 
       if (callbackResult) {
         // Use the returned props if provided, otherwise keep the original props
-        if (callbackResult.grantProps) {
-          grantProps = callbackResult.grantProps;
+        if (callbackResult.newProps) {
+          grantProps = callbackResult.newProps;
           
-          // If tokenProps wasn't explicitly specified, use the updated grantProps for the token too
-          // This ensures token props are updated when only grant props are specified
-          if (!callbackResult.tokenProps) {
-            accessTokenProps = callbackResult.grantProps;
+          // If accessTokenProps wasn't explicitly specified, use the updated newProps for the token too
+          // This ensures token props are updated when only newProps are specified
+          if (!callbackResult.accessTokenProps) {
+            accessTokenProps = callbackResult.newProps;
           }
         }
         
-        // If tokenProps was explicitly specified, use those
-        if (callbackResult.tokenProps) {
-          accessTokenProps = callbackResult.tokenProps;
+        // If accessTokenProps was explicitly specified, use those
+        if (callbackResult.accessTokenProps) {
+          accessTokenProps = callbackResult.accessTokenProps;
         }
       }
 
@@ -1461,20 +1464,20 @@ class OAuthProviderImpl {
       let grantPropsChanged = false;
       if (callbackResult) {
         // Use the returned props if provided, otherwise keep the original props
-        if (callbackResult.grantProps) {
-          grantProps = callbackResult.grantProps;
+        if (callbackResult.newProps) {
+          grantProps = callbackResult.newProps;
           grantPropsChanged = true;
           
-          // If tokenProps wasn't explicitly specified, use the updated grantProps for the token too
-          // This ensures token props are updated when only grant props are specified
-          if (!callbackResult.tokenProps) {
-            accessTokenProps = callbackResult.grantProps;
+          // If accessTokenProps wasn't explicitly specified, use the updated newProps for the token too
+          // This ensures token props are updated when only newProps are specified
+          if (!callbackResult.accessTokenProps) {
+            accessTokenProps = callbackResult.newProps;
           }
         }
         
-        // If tokenProps was explicitly specified, use those
-        if (callbackResult.tokenProps) {
-          accessTokenProps = callbackResult.tokenProps;
+        // If accessTokenProps was explicitly specified, use those
+        if (callbackResult.accessTokenProps) {
+          accessTokenProps = callbackResult.accessTokenProps;
         }
       }
 

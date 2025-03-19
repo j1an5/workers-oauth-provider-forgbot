@@ -218,12 +218,12 @@ new OAuthProvider({
 
       return {
         // Update the props stored in the access token
-        tokenProps: {
+        accessTokenProps: {
           ...options.props,
           upstreamAccessToken: upstreamTokens.access_token
         },
         // Update the props stored in the grant (for future token refreshes)
-        grantProps: {
+        newProps: {
           ...options.props,
           upstreamRefreshToken: upstreamTokens.refresh_token
         }
@@ -235,11 +235,11 @@ new OAuthProvider({
       const upstreamTokens = await refreshUpstreamToken(options.props.upstreamRefreshToken);
 
       return {
-        tokenProps: {
+        accessTokenProps: {
           ...options.props,
           upstreamAccessToken: upstreamTokens.access_token
         },
-        grantProps: {
+        newProps: {
           ...options.props,
           upstreamRefreshToken: upstreamTokens.refresh_token || options.props.upstreamRefreshToken
         }
@@ -250,8 +250,9 @@ new OAuthProvider({
 ```
 
 The callback can:
-- Return both `tokenProps` and `grantProps` to update both
-- Return only `tokenProps` or `grantProps` to update just one
+- Return both `accessTokenProps` and `newProps` to update both
+- Return only `accessTokenProps` to update just the current access token
+- Return only `newProps` to update both the grant and access token (the access token inherits these props)
 - Return nothing to keep the original props unchanged
 
 The `props` values are end-to-end encrypted, so they can safely contain sensitive information.

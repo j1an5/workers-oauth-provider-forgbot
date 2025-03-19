@@ -1037,24 +1037,24 @@ describe('OAuthProvider', () => {
         // Return different props based on the grant type
         if (options.grantType === 'authorization_code') {
           return {
-            tokenProps: {
+            accessTokenProps: {
               ...options.props,
               tokenSpecific: true,
               tokenUpdatedAt: 'auth_code_flow'
             },
-            grantProps: {
+            newProps: {
               ...options.props,
               grantUpdated: true
             }
           };
         } else if (options.grantType === 'refresh_token') {
           return {
-            tokenProps: {
+            accessTokenProps: {
               ...options.props,
               tokenSpecific: true,
               tokenUpdatedAt: 'refresh_token_flow'
             },
-            grantProps: {
+            newProps: {
               ...options.props,
               grantUpdated: true,
               refreshCount: (options.props.refreshCount || 0) + 1
@@ -1305,17 +1305,17 @@ describe('OAuthProvider', () => {
     });
 
     it('should update token props during refresh when explicitly provided', async () => {
-      // Create a provider with a callback that returns both tokenProps and grantProps
+      // Create a provider with a callback that returns both accessTokenProps and newProps
       // but with different values for each
       const differentPropsCallback = async (options: any) => {
         if (options.grantType === 'refresh_token') {
           return {
-            tokenProps: {
+            accessTokenProps: {
               ...options.props,
               refreshed: true,
               tokenOnly: true
             },
-            grantProps: {
+            newProps: {
               ...options.props,
               grantUpdated: true
             }
@@ -1416,19 +1416,19 @@ describe('OAuthProvider', () => {
       expect(apiData.user).not.toHaveProperty('grantUpdated');
     });
 
-    it('should handle callback that returns only tokenProps or only grantProps', async () => {
-      // Create a provider with a callback that returns only tokenProps for auth code
-      // and only grantProps for refresh token
-      // Note: With the enhanced implementation, when only grantProps is returned
-      // without tokenProps, the token props will inherit from grantProps
-      const tokenPropsOnlyCallback = async (options: any) => {
+    it('should handle callback that returns only accessTokenProps or only newProps', async () => {
+      // Create a provider with a callback that returns only accessTokenProps for auth code
+      // and only newProps for refresh token
+      // Note: With the enhanced implementation, when only newProps is returned
+      // without accessTokenProps, the token props will inherit from newProps
+      const propsCallback = async (options: any) => {
         if (options.grantType === 'authorization_code') {
           return {
-            tokenProps: { ...options.props, tokenOnly: true }
+            accessTokenProps: { ...options.props, tokenOnly: true }
           };
         } else if (options.grantType === 'refresh_token') {
           return {
-            grantProps: { ...options.props, grantOnly: true }
+            newProps: { ...options.props, grantOnly: true }
           };
         }
       };
@@ -1441,7 +1441,7 @@ describe('OAuthProvider', () => {
         tokenEndpoint: '/oauth/token',
         clientRegistrationEndpoint: '/oauth/register',
         scopesSupported: ['read', 'write'],
-        tokenExchangeCallback: tokenPropsOnlyCallback
+        tokenExchangeCallback: propsCallback
       });
 
       // Create a client
@@ -1531,7 +1531,7 @@ describe('OAuthProvider', () => {
       const api2Data = await api2Response.json();
 
       // With the enhanced implementation, the token props now inherit from grant props
-      // when only grantProps is returned but tokenProps is not specified
+      // when only newProps is returned but accessTokenProps is not specified
       expect(api2Data.user).toEqual({
         userId: "test-user-123",
         username: "TestUser",
@@ -1622,7 +1622,7 @@ describe('OAuthProvider', () => {
     it('should correctly handle the previous refresh token when callback updates grant props', async () => {
       // This test verifies fixes for two bugs:
       // 1. previousRefreshTokenWrappedKey not being re-wrapped when grant props change
-      // 2. tokenProps not inheriting from grantProps when only grantProps is returned
+      // 2. accessTokenProps not inheriting from newProps when only newProps is returned
       let callCount = 0;
       const propUpdatingCallback = async (options: any) => {
         callCount++;
@@ -1632,11 +1632,11 @@ describe('OAuthProvider', () => {
             updatedCount: (options.props.updatedCount || 0) + 1
           };
           
-          // Only return grantProps to test that tokenProps will inherit from it
+          // Only return newProps to test that accessTokenProps will inherit from it
           return {
-            // Return new grant props to trigger the re-encryption with a new key
-            grantProps: updatedProps
-            // Intentionally not setting tokenProps to verify inheritance works
+            // Return new props to trigger the re-encryption with a new key
+            newProps: updatedProps
+            // Intentionally not setting accessTokenProps to verify inheritance works
           };
         }
         return undefined;
