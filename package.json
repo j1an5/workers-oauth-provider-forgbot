@@ -11,7 +11,7 @@
   ],
   "type": "module",
   "publishConfig": {
-    "access": "restricted"
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",
