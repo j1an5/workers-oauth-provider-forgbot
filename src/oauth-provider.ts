@@ -8,25 +8,27 @@ import { WorkerEntrypoint } from 'cloudflare:workers';
  */
 enum HandlerType {
   EXPORTED_HANDLER,
-  WORKER_ENTRYPOINT
+  WORKER_ENTRYPOINT,
 }
 
 /**
  * Discriminated union type for handlers
  */
-type TypedHandler = {
-  type: HandlerType.EXPORTED_HANDLER,
-  handler: ExportedHandlerWithFetch
-} | {
-  type: HandlerType.WORKER_ENTRYPOINT,
-  handler: new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch
-};
+type TypedHandler =
+  | {
+      type: HandlerType.EXPORTED_HANDLER;
+      handler: ExportedHandlerWithFetch;
+    }
+  | {
+      type: HandlerType.WORKER_ENTRYPOINT;
+      handler: new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch;
+    };
 
 /**
  * Aliases for either type of Handler that makes .fetch required
  */
-type ExportedHandlerWithFetch = ExportedHandler & Pick<Required<ExportedHandler>, 'fetch'>
-type WorkerEntrypointWithFetch = WorkerEntrypoint & Pick<Required<WorkerEntrypoint>, 'fetch'>
+type ExportedHandlerWithFetch = ExportedHandler & Pick<Required<ExportedHandler>, 'fetch'>;
+type WorkerEntrypointWithFetch = WorkerEntrypoint & Pick<Required<WorkerEntrypoint>, 'fetch'>;
 
 /**
  * Configuration options for the OAuth Provider
@@ -167,7 +169,9 @@ export interface OAuthProviderOptions {
    * The callback can return new props values that will be stored with the token or grant.
    * If the callback returns nothing or undefined for a props field, the original props will be used.
    */
-  tokenExchangeCallback?: (options: TokenExchangeCallbackOptions) => Promise<TokenExchangeCallbackResult | void> | TokenExchangeCallbackResult | void;
+  tokenExchangeCallback?: (
+    options: TokenExchangeCallbackOptions
+  ) => Promise<TokenExchangeCallbackResult | void> | TokenExchangeCallbackResult | void;
 }
 
 // Using ExportedHandler from Cloudflare Workers Types for both API and default handlers
@@ -614,7 +618,7 @@ export interface GrantSummary {
  * and dynamic client registration.
  */
 export class OAuthProvider {
-  #impl :OAuthProviderImpl;
+  #impl: OAuthProviderImpl;
 
   /**
    * Creates a new OAuth provider instance
@@ -654,8 +658,8 @@ class OAuthProviderImpl {
   /**
    * Represents the validated type of a handler (ExportedHandler or WorkerEntrypoint)
    */
-  private typedApiHandler: TypedHandler
-  private typedDefaultHandler: TypedHandler
+  private typedApiHandler: TypedHandler;
+  private typedDefaultHandler: TypedHandler;
 
   /**
    * Creates a new OAuth provider instance
@@ -682,7 +686,7 @@ class OAuthProviderImpl {
 
     this.options = {
       ...options,
-      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL
+      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL,
     };
   }
 
@@ -718,15 +722,17 @@ class OAuthProviderImpl {
   private validateHandler(handler: any, name: string): TypedHandler {
     if (typeof handler === 'object' && handler !== null && typeof handler.fetch === 'function') {
       // It's an ExportedHandler object
-      return { type:HandlerType.EXPORTED_HANDLER, handler }
+      return { type: HandlerType.EXPORTED_HANDLER, handler };
     }
 
     // Check if it's a class constructor extending WorkerEntrypoint
     if (typeof handler === 'function' && handler.prototype instanceof WorkerEntrypoint) {
-      return { type: HandlerType.WORKER_ENTRYPOINT, handler }
+      return { type: HandlerType.WORKER_ENTRYPOINT, handler };
     }
 
-    throw new TypeError(`${name} must be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint`);
+    throw new TypeError(
+      `${name} must be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint`
+    );
   }
 
   /**
@@ -743,16 +749,17 @@ class OAuthProviderImpl {
     // Special handling for OPTIONS requests (CORS preflight)
     if (request.method === 'OPTIONS') {
       // For API routes and OAuth endpoints, respond with CORS headers
-      if (this.isApiRequest(url) ||
-          url.pathname === '/.well-known/oauth-authorization-server' ||
-          this.isTokenEndpoint(url) ||
-          (this.options.clientRegistrationEndpoint && this.isClientRegistrationEndpoint(url))) {
-
+      if (
+        this.isApiRequest(url) ||
+        url.pathname === '/.well-known/oauth-authorization-server' ||
+        this.isTokenEndpoint(url) ||
+        (this.options.clientRegistrationEndpoint && this.isClientRegistrationEndpoint(url))
+      ) {
         // Create an empty 204 No Content response with CORS headers
         return this.addCorsHeaders(
           new Response(null, {
             status: 204,
-            headers: { 'Content-Length': '0' }
+            headers: { 'Content-Length': '0' },
           }),
           request
         );
@@ -774,8 +781,7 @@ class OAuthProviderImpl {
     }
 
     // Handle client registration endpoint
-    if (this.options.clientRegistrationEndpoint &&
-        this.isClientRegistrationEndpoint(url)) {
+    if (this.options.clientRegistrationEndpoint && this.isClientRegistrationEndpoint(url)) {
       const response = await this.handleClientRegistration(request, env);
       return this.addCorsHeaders(response, request);
     }
@@ -795,7 +801,11 @@ class OAuthProviderImpl {
     // Note: We don't add CORS headers to default handler responses
     if (this.typedDefaultHandler.type === HandlerType.EXPORTED_HANDLER) {
       // It's an object with a fetch method
-      return this.typedDefaultHandler.handler.fetch(request as Parameters<ExportedHandlerWithFetch['fetch']>[0], env, ctx);
+      return this.typedDefaultHandler.handler.fetch(
+        request as Parameters<ExportedHandlerWithFetch['fetch']>[0],
+        env,
+        ctx
+      );
     } else {
       // It's a WorkerEntrypoint class - instantiate it with ctx and env in that order
       const handler = new this.typedDefaultHandler.handler(ctx, env);
@@ -874,7 +884,7 @@ class OAuthProviderImpl {
     // Handle array of routes
     if (Array.isArray(this.options.apiRoute)) {
       // Return true if any route matches
-      return this.options.apiRoute.some(route => this.matchApiRoute(url, route));
+      return this.options.apiRoute.some((route) => this.matchApiRoute(url, route));
     } else {
       // Handle single route
       return this.matchApiRoute(url, this.options.apiRoute);
@@ -944,11 +954,11 @@ class OAuthProviderImpl {
     }
 
     // Determine supported response types
-    const responseTypesSupported = ["code"];
+    const responseTypesSupported = ['code'];
 
     // Add token response type if implicit flow is allowed
     if (this.options.allowImplicitFlow) {
-      responseTypesSupported.push("token");
+      responseTypesSupported.push('token');
     }
 
     const metadata = {
@@ -959,10 +969,10 @@ class OAuthProviderImpl {
       registration_endpoint: registrationEndpoint,
       scopes_supported: this.options.scopesSupported,
       response_types_supported: responseTypesSupported,
-      response_modes_supported: ["query"],
-      grant_types_supported: ["authorization_code", "refresh_token"],
+      response_modes_supported: ['query'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
       // Support "none" auth method for public clients
-      token_endpoint_auth_methods_supported: ["client_secret_basic", "client_secret_post", "none"],
+      token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
       // not implemented: token_endpoint_auth_signing_alg_values_supported
       // not implemented: service_documentation
       // not implemented: ui_locales_supported
@@ -974,11 +984,11 @@ class OAuthProviderImpl {
       // not implemented: introspection_endpoint
       // not implemented: introspection_endpoint_auth_methods_supported
       // not implemented: introspection_endpoint_auth_signing_alg_values_supported
-      code_challenge_methods_supported: ["plain", "S256"], // PKCE support
+      code_challenge_methods_supported: ['plain', 'S256'], // PKCE support
     };
 
     return new Response(JSON.stringify(metadata), {
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
@@ -992,11 +1002,7 @@ class OAuthProviderImpl {
   private async handleTokenRequest(request: Request, env: any): Promise<Response> {
     // Only accept POST requests
     if (request.method !== 'POST') {
-      return createErrorResponse(
-        'invalid_request',
-        'Method not allowed',
-        405
-      );
+      return createErrorResponse('invalid_request', 'Method not allowed', 405);
     }
 
     let contentType = request.headers.get('Content-Type') || '';
@@ -1005,11 +1011,7 @@ class OAuthProviderImpl {
     // According to OAuth 2.0 RFC 6749 Section 2.3, token requests MUST use
     // application/x-www-form-urlencoded content type
     if (!contentType.includes('application/x-www-form-urlencoded')) {
-      return createErrorResponse(
-        'invalid_request',
-        'Content-Type must be application/x-www-form-urlencoded',
-        400
-      );
+      return createErrorResponse('invalid_request', 'Content-Type must be application/x-www-form-urlencoded', 400);
     }
 
     // Process application/x-www-form-urlencoded
@@ -1036,21 +1038,13 @@ class OAuthProviderImpl {
     }
 
     if (!clientId) {
-      return createErrorResponse(
-        'invalid_client',
-        'Client ID is required',
-        401
-      );
+      return createErrorResponse('invalid_client', 'Client ID is required', 401);
     }
 
     // Verify client exists
     const clientInfo = await this.getClient(env, clientId);
     if (!clientInfo) {
-      return createErrorResponse(
-        'invalid_client',
-        'Client not found',
-        401
-      );
+      return createErrorResponse('invalid_client', 'Client not found', 401);
     }
 
     // Determine authentication requirements based on token endpoint auth method
@@ -1059,11 +1053,7 @@ class OAuthProviderImpl {
     // For confidential clients, validate the secret
     if (!isPublicClient) {
       if (!clientSecret) {
-        return createErrorResponse(
-          'invalid_client',
-          'Client authentication failed: missing client_secret',
-          401
-        );
+        return createErrorResponse('invalid_client', 'Client authentication failed: missing client_secret', 401);
       }
 
       // Verify the client secret matches
@@ -1077,11 +1067,7 @@ class OAuthProviderImpl {
 
       const providedSecretHash = await hashSecret(clientSecret);
       if (providedSecretHash !== clientInfo.clientSecret) {
-        return createErrorResponse(
-          'invalid_client',
-          'Client authentication failed: invalid client_secret',
-          401
-        );
+        return createErrorResponse('invalid_client', 'Client authentication failed: invalid client_secret', 401);
       }
     }
     // For public clients, no secret is required
@@ -1094,10 +1080,7 @@ class OAuthProviderImpl {
     } else if (grantType === 'refresh_token') {
       return this.handleRefreshTokenGrant(body, clientInfo, env);
     } else {
-      return createErrorResponse(
-        'unsupported_grant_type',
-        'Grant type not supported'
-      );
+      return createErrorResponse('unsupported_grant_type', 'Grant type not supported');
     }
   }
 
@@ -1109,29 +1092,19 @@ class OAuthProviderImpl {
    * @param env - Cloudflare Worker environment variables
    * @returns Response with token data or error
    */
-  private async handleAuthorizationCodeGrant(
-    body: any,
-    clientInfo: ClientInfo,
-    env: any
-  ): Promise<Response> {
+  private async handleAuthorizationCodeGrant(body: any, clientInfo: ClientInfo, env: any): Promise<Response> {
     const code = body.code;
     const redirectUri = body.redirect_uri;
     const codeVerifier = body.code_verifier;
 
     if (!code) {
-      return createErrorResponse(
-        'invalid_request',
-        'Authorization code is required'
-      );
+      return createErrorResponse('invalid_request', 'Authorization code is required');
     }
 
     // Parse the authorization code to extract user ID and grant ID
     const codeParts = code.split(':');
     if (codeParts.length !== 3) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid authorization code format'
-      );
+      return createErrorResponse('invalid_grant', 'Invalid authorization code format');
     }
 
     const [userId, grantId, _] = codeParts;
@@ -1141,35 +1114,23 @@ class OAuthProviderImpl {
     const grantData: Grant | null = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
     if (!grantData) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Grant not found or authorization code expired'
-      );
+      return createErrorResponse('invalid_grant', 'Grant not found or authorization code expired');
     }
 
     // Verify that the grant contains an auth code hash
     if (!grantData.authCodeId) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Authorization code already used'
-      );
+      return createErrorResponse('invalid_grant', 'Authorization code already used');
     }
 
     // Verify the authorization code by comparing its hash to the one in the grant
     const codeHash = await hashSecret(code);
     if (codeHash !== grantData.authCodeId) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid authorization code'
-      );
+      return createErrorResponse('invalid_grant', 'Invalid authorization code');
     }
 
     // Verify client ID matches
     if (grantData.clientId !== clientInfo.clientId) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Client ID mismatch'
-      );
+      return createErrorResponse('invalid_grant', 'Client ID mismatch');
     }
 
     // Check if PKCE is being used
@@ -1177,27 +1138,18 @@ class OAuthProviderImpl {
 
     // OAuth 2.1 requires redirect_uri parameter unless PKCE is used
     if (!redirectUri && !isPkceEnabled) {
-      return createErrorResponse(
-        'invalid_request',
-        'redirect_uri is required when not using PKCE'
-      );
+      return createErrorResponse('invalid_request', 'redirect_uri is required when not using PKCE');
     }
 
     // Verify redirect URI if provided
     if (redirectUri && !clientInfo.redirectUris.includes(redirectUri)) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid redirect URI'
-      );
+      return createErrorResponse('invalid_grant', 'Invalid redirect URI');
     }
 
     // Verify PKCE code_verifier if code_challenge was provided during authorization
     if (isPkceEnabled) {
       if (!codeVerifier) {
-        return createErrorResponse(
-          'invalid_request',
-          'code_verifier is required for PKCE'
-        );
+        return createErrorResponse('invalid_request', 'code_verifier is required for PKCE');
       }
 
       // Verify the code verifier against the stored code challenge
@@ -1216,10 +1168,7 @@ class OAuthProviderImpl {
       }
 
       if (calculatedChallenge !== grantData.codeChallenge) {
-        return createErrorResponse(
-          'invalid_grant',
-          'Invalid PKCE code_verifier'
-        );
+        return createErrorResponse('invalid_grant', 'Invalid PKCE code_verifier');
       }
     }
 
@@ -1259,7 +1208,7 @@ class OAuthProviderImpl {
         clientId: clientInfo.clientId,
         userId: userId,
         scope: grantData.scope,
-        props: decryptedProps
+        props: decryptedProps,
       };
 
       const callbackResult = await Promise.resolve(this.options.tokenExchangeCallback(callbackOptions));
@@ -1341,27 +1290,28 @@ class OAuthProviderImpl {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        encryptedProps: encryptedAccessTokenProps
-      }
+        encryptedProps: encryptedAccessTokenProps,
+      },
     };
 
     // Save access token with TTL (using the potentially callback-provided TTL)
-    await env.OAUTH_KV.put(
-      `token:${userId}:${grantId}:${accessTokenId}`,
-      JSON.stringify(accessTokenData),
-      { expirationTtl: accessTokenTTL }
-    );
+    await env.OAUTH_KV.put(`token:${userId}:${grantId}:${accessTokenId}`, JSON.stringify(accessTokenData), {
+      expirationTtl: accessTokenTTL,
+    });
 
     // Return the tokens
-    return new Response(JSON.stringify({
-      access_token: accessToken,
-      token_type: 'bearer',
-      expires_in: accessTokenTTL,
-      refresh_token: refreshToken,
-      scope: grantData.scope.join(' ')
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(
+      JSON.stringify({
+        access_token: accessToken,
+        token_type: 'bearer',
+        expires_in: accessTokenTTL,
+        refresh_token: refreshToken,
+        scope: grantData.scope.join(' '),
+      }),
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   /**
@@ -1372,27 +1322,17 @@ class OAuthProviderImpl {
    * @param env - Cloudflare Worker environment variables
    * @returns Response with token data or error
    */
-  private async handleRefreshTokenGrant(
-    body: any,
-    clientInfo: ClientInfo,
-    env: any
-  ): Promise<Response> {
+  private async handleRefreshTokenGrant(body: any, clientInfo: ClientInfo, env: any): Promise<Response> {
     const refreshToken = body.refresh_token;
 
     if (!refreshToken) {
-      return createErrorResponse(
-        'invalid_request',
-        'Refresh token is required'
-      );
+      return createErrorResponse('invalid_request', 'Refresh token is required');
     }
 
     // Parse the token to extract user ID and grant ID
     const tokenParts = refreshToken.split(':');
     if (tokenParts.length !== 3) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid token format'
-      );
+      return createErrorResponse('invalid_grant', 'Invalid token format');
     }
 
     const [userId, grantId, _] = tokenParts;
@@ -1405,10 +1345,7 @@ class OAuthProviderImpl {
     const grantData: Grant | null = await env.OAUTH_KV.get(grantKey, { type: 'json' });
 
     if (!grantData) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Grant not found'
-      );
+      return createErrorResponse('invalid_grant', 'Grant not found');
     }
 
     // Check if the provided token matches either the current or previous refresh token
@@ -1416,18 +1353,12 @@ class OAuthProviderImpl {
     const isPreviousToken = grantData.previousRefreshTokenId === providedTokenHash;
 
     if (!isCurrentToken && !isPreviousToken) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Invalid refresh token'
-      );
+      return createErrorResponse('invalid_grant', 'Invalid refresh token');
     }
 
     // Verify client ID matches
     if (grantData.clientId !== clientInfo.clientId) {
-      return createErrorResponse(
-        'invalid_grant',
-        'Client ID mismatch'
-      );
+      return createErrorResponse('invalid_grant', 'Client ID mismatch');
     }
 
     // Generate new access token with embedded user and grant IDs
@@ -1473,7 +1404,7 @@ class OAuthProviderImpl {
         clientId: clientInfo.clientId,
         userId: userId,
         scope: grantData.scope,
-        props: decryptedProps
+        props: decryptedProps,
       };
 
       const callbackResult = await Promise.resolve(this.options.tokenExchangeCallback(callbackOptions));
@@ -1571,27 +1502,28 @@ class OAuthProviderImpl {
       grant: {
         clientId: grantData.clientId,
         scope: grantData.scope,
-        encryptedProps: encryptedAccessTokenProps
-      }
+        encryptedProps: encryptedAccessTokenProps,
+      },
     };
 
     // Save access token with TTL (using the potentially callback-provided TTL)
-    await env.OAUTH_KV.put(
-      `token:${userId}:${grantId}:${accessTokenId}`,
-      JSON.stringify(accessTokenData),
-      { expirationTtl: accessTokenTTL }
-    );
+    await env.OAUTH_KV.put(`token:${userId}:${grantId}:${accessTokenId}`, JSON.stringify(accessTokenData), {
+      expirationTtl: accessTokenTTL,
+    });
 
     // Return the new access token and refresh token
-    return new Response(JSON.stringify({
-      access_token: newAccessToken,
-      token_type: 'bearer',
-      expires_in: accessTokenTTL,
-      refresh_token: newRefreshToken,
-      scope: grantData.scope.join(' ')
-    }), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return new Response(
+      JSON.stringify({
+        access_token: newAccessToken,
+        token_type: 'bearer',
+        expires_in: accessTokenTTL,
+        refresh_token: newRefreshToken,
+        scope: grantData.scope.join(' '),
+      }),
+      {
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
   }
 
   /**
@@ -1602,50 +1534,32 @@ class OAuthProviderImpl {
    */
   private async handleClientRegistration(request: Request, env: any): Promise<Response> {
     if (!this.options.clientRegistrationEndpoint) {
-      return createErrorResponse(
-        'not_implemented',
-        'Client registration is not enabled',
-        501
-      );
+      return createErrorResponse('not_implemented', 'Client registration is not enabled', 501);
     }
 
     // Check method
     if (request.method !== 'POST') {
-      return createErrorResponse(
-        'invalid_request',
-        'Method not allowed',
-        405
-      );
+      return createErrorResponse('invalid_request', 'Method not allowed', 405);
     }
 
     // Check content length to ensure it's not too large (1 MiB limit)
     const contentLength = parseInt(request.headers.get('Content-Length') || '0', 10);
-    if (contentLength > 1048576) { // 1 MiB = 1048576 bytes
-      return createErrorResponse(
-        'invalid_request',
-        'Request payload too large, must be under 1 MiB',
-        413
-      );
+    if (contentLength > 1048576) {
+      // 1 MiB = 1048576 bytes
+      return createErrorResponse('invalid_request', 'Request payload too large, must be under 1 MiB', 413);
     }
 
     // Parse client metadata with a size limitation
     let clientMetadata;
     try {
       const text = await request.text();
-      if (text.length > 1048576) { // Double-check text length
-        return createErrorResponse(
-          'invalid_request',
-          'Request payload too large, must be under 1 MiB',
-          413
-        );
+      if (text.length > 1048576) {
+        // Double-check text length
+        return createErrorResponse('invalid_request', 'Request payload too large, must be under 1 MiB', 413);
       }
       clientMetadata = JSON.parse(text);
     } catch (error) {
-      return createErrorResponse(
-        'invalid_request',
-        'Invalid JSON payload',
-        400
-      );
+      return createErrorResponse('invalid_request', 'Invalid JSON payload', 400);
     }
 
     // Basic type validation functions
@@ -1683,10 +1597,7 @@ class OAuthProviderImpl {
 
     // Check if public client registrations are disallowed
     if (isPublicClient && this.options.disallowPublicClientRegistration) {
-      return createErrorResponse(
-        'invalid_client_metadata',
-        'Public client registration is not allowed'
-      );
+      return createErrorResponse('invalid_client_metadata', 'Public client registration is not allowed');
     }
 
     // Create client ID
@@ -1722,7 +1633,7 @@ class OAuthProviderImpl {
         grantTypes: validateStringArray(clientMetadata.grant_types) || ['authorization_code', 'refresh_token'],
         responseTypes: validateStringArray(clientMetadata.response_types) || ['code'],
         registrationDate: Math.floor(Date.now() / 1000),
-        tokenEndpointAuthMethod: authMethod
+        tokenEndpointAuthMethod: authMethod,
       };
 
       // Add client secret only for confidential clients
@@ -1764,7 +1675,7 @@ class OAuthProviderImpl {
 
     return new Response(JSON.stringify(response), {
       status: 201,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json' },
     });
   }
 
@@ -1780,12 +1691,10 @@ class OAuthProviderImpl {
     const authHeader = request.headers.get('Authorization');
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return createErrorResponse(
-        'invalid_token',
-        'Missing or invalid access token',
-        401,
-        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token", error_description="Missing or invalid access token"' }
-      );
+      return createErrorResponse('invalid_token', 'Missing or invalid access token', 401, {
+        'WWW-Authenticate':
+          'Bearer realm="OAuth", error="invalid_token", error_description="Missing or invalid access token"',
+      });
     }
 
     const accessToken = authHeader.substring(7);
@@ -1793,12 +1702,9 @@ class OAuthProviderImpl {
     // Parse the token to extract user ID and grant ID for parallel lookups
     const tokenParts = accessToken.split(':');
     if (tokenParts.length !== 3) {
-      return createErrorResponse(
-        'invalid_token',
-        'Invalid token format',
-        401,
-        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
-      );
+      return createErrorResponse('invalid_token', 'Invalid token format', 401, {
+        'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"',
+      });
     }
 
     const [userId, grantId, _] = tokenParts;
@@ -1812,33 +1718,24 @@ class OAuthProviderImpl {
 
     // Verify token
     if (!tokenData) {
-      return createErrorResponse(
-        'invalid_token',
-        'Invalid access token',
-        401,
-        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
-      );
+      return createErrorResponse('invalid_token', 'Invalid access token', 401, {
+        'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"',
+      });
     }
 
     // Check if token is expired (should be auto-deleted by KV TTL, but double-check)
     const now = Math.floor(Date.now() / 1000);
     if (tokenData.expiresAt < now) {
-      return createErrorResponse(
-        'invalid_token',
-        'Access token expired',
-        401,
-        { 'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"' }
-      );
+      return createErrorResponse('invalid_token', 'Access token expired', 401, {
+        'WWW-Authenticate': 'Bearer realm="OAuth", error="invalid_token"',
+      });
     }
 
     // Unwrap the encryption key using the access token
     const encryptionKey = await unwrapKeyWithToken(accessToken, tokenData.wrappedEncryptionKey);
 
     // Decrypt the props
-    const decryptedProps = await decryptProps(
-      encryptionKey,
-      tokenData.grant.encryptedProps
-    );
+    const decryptedProps = await decryptProps(encryptionKey, tokenData.grant.encryptedProps);
 
     // Set the decrypted props on the context object
     ctx.props = decryptedProps;
@@ -1911,15 +1808,15 @@ function createErrorResponse(
 ): Response {
   const body = JSON.stringify({
     error: code,
-    error_description: description
+    error_description: description,
   });
 
   return new Response(body, {
     status,
     headers: {
       'Content-Type': 'application/json',
-      ...headers
-    }
+      ...headers,
+    },
   });
 }
 
@@ -1964,7 +1861,7 @@ async function generateTokenId(token: string): Promise<string> {
 
   // Convert the hash to a hex string
   const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 
   return hashHex;
 }
@@ -1975,10 +1872,7 @@ async function generateTokenId(token: string): Promise<string> {
  * @returns The base64url encoded string
  */
 function base64UrlEncode(str: string): string {
-  return btoa(str)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=/g, '');
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 }
 
 /**
@@ -2009,13 +1903,13 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
  * @param data - The data to encrypt
  * @returns An object containing the encrypted data and the generated key
  */
-async function encryptProps(data: any): Promise<{ encryptedData: string, key: CryptoKey }> {
+async function encryptProps(data: any): Promise<{ encryptedData: string; key: CryptoKey }> {
   // Generate a new encryption key for this specific props data
   // @ts-ignore
   const key: CryptoKey = await crypto.subtle.generateKey(
     {
       name: 'AES-GCM',
-      length: 256
+      length: 256,
     },
     true, // extractable
     ['encrypt', 'decrypt']
@@ -2033,7 +1927,7 @@ async function encryptProps(data: any): Promise<{ encryptedData: string, key: Cr
   const encryptedBuffer = await crypto.subtle.encrypt(
     {
       name: 'AES-GCM',
-      iv
+      iv,
     },
     key,
     encodedData
@@ -2042,7 +1936,7 @@ async function encryptProps(data: any): Promise<{ encryptedData: string, key: Cr
   // Convert to base64 for storage
   return {
     encryptedData: arrayBufferToBase64(encryptedBuffer),
-    key
+    key,
   };
 }
 
@@ -2063,7 +1957,7 @@ async function decryptProps(key: CryptoKey, encryptedData: string): Promise<any>
   const decryptedBuffer = await crypto.subtle.decrypt(
     {
       name: 'AES-GCM',
-      iv
+      iv,
     },
     key,
     encryptedBuffer
@@ -2079,10 +1973,8 @@ async function decryptProps(key: CryptoKey, encryptedData: string): Promise<any>
 // This ensures that even if someone has the token ID, they can't derive the wrapping key
 // We use a fixed array of 32 bytes for optimal performance
 const WRAPPING_KEY_HMAC_KEY = new Uint8Array([
-  0x22, 0x7e, 0x26, 0x86, 0x8d, 0xf1, 0xe1, 0x6d,
-  0x80, 0x70, 0xea, 0x17, 0x97, 0x5b, 0x47, 0xa6,
-  0x82, 0x18, 0xfa, 0x87, 0x28, 0xae, 0xde, 0x85,
-  0xb5, 0x1d, 0x4a, 0xd9, 0x96, 0xca, 0xca, 0x43
+  0x22, 0x7e, 0x26, 0x86, 0x8d, 0xf1, 0xe1, 0x6d, 0x80, 0x70, 0xea, 0x17, 0x97, 0x5b, 0x47, 0xa6, 0x82, 0x18, 0xfa,
+  0x87, 0x28, 0xae, 0xde, 0x85, 0xb5, 0x1d, 0x4a, 0xd9, 0x96, 0xca, 0xca, 0x43,
 ]);
 
 /**
@@ -2097,19 +1989,15 @@ async function deriveKeyFromToken(tokenStr: string): Promise<CryptoKey> {
 
   // Import the pre-defined HMAC key (already 32 bytes)
   const hmacKey = await crypto.subtle.importKey(
-    "raw",
+    'raw',
     WRAPPING_KEY_HMAC_KEY,
-    { name: "HMAC", hash: "SHA-256" },
+    { name: 'HMAC', hash: 'SHA-256' },
     false,
-    ["sign"]
+    ['sign']
   );
 
   // Use HMAC-SHA256 to derive the wrapping key material
-  const hmacResult = await crypto.subtle.sign(
-    "HMAC",
-    hmacKey,
-    encoder.encode(tokenStr)
-  );
+  const hmacResult = await crypto.subtle.sign('HMAC', hmacKey, encoder.encode(tokenStr));
 
   // Import the HMAC result as the wrapping key
   return await crypto.subtle.importKey(
@@ -2132,12 +2020,7 @@ async function wrapKeyWithToken(tokenStr: string, keyToWrap: CryptoKey): Promise
   const wrappingKey = await deriveKeyFromToken(tokenStr);
 
   // Wrap the encryption key
-  const wrappedKeyBuffer = await crypto.subtle.wrapKey(
-    'raw',
-    keyToWrap,
-    wrappingKey,
-    { name: 'AES-KW' }
-  );
+  const wrappedKeyBuffer = await crypto.subtle.wrapKey('raw', keyToWrap, wrappingKey, { name: 'AES-KW' });
 
   // Convert to base64 for storage
   return arrayBufferToBase64(wrappedKeyBuffer);
@@ -2213,7 +2096,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
       scope,
       state,
       codeChallenge,
-      codeChallengeMethod
+      codeChallengeMethod,
     };
   }
 
@@ -2267,7 +2150,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
         scope: options.scope,
         metadata: options.metadata,
         encryptedProps: encryptedData,
-        createdAt: now
+        createdAt: now,
       };
 
       // Store the grant with a key that includes the user ID
@@ -2285,8 +2168,8 @@ class OAuthHelpersImpl implements OAuthHelpers {
         grant: {
           clientId: options.request.clientId,
           scope: options.scope,
-          encryptedProps: encryptedData
-        }
+          encryptedProps: encryptedData,
+        },
       };
 
       // Save access token with TTL
@@ -2337,7 +2220,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
         authCodeWrappedKey: authCodeWrappedKey, // Store the wrapped key
         // Store PKCE parameters if provided
         codeChallenge: options.request.codeChallenge,
-        codeChallengeMethod: options.request.codeChallengeMethod
+        codeChallengeMethod: options.request.codeChallengeMethod,
       };
 
       // Store the grant with a key that includes the user ID
@@ -2384,7 +2267,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
       grantTypes: clientInfo.grantTypes || ['authorization_code', 'refresh_token'],
       responseTypes: clientInfo.responseTypes || ['code'],
       registrationDate: Math.floor(Date.now() / 1000),
-      tokenEndpointAuthMethod
+      tokenEndpointAuthMethod,
     };
 
     // Only generate and store client secret for confidential clients
@@ -2416,7 +2299,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
   async listClients(options?: ListOptions): Promise<ListResult<ClientInfo>> {
     // Prepare list options for KV
     const listOptions: { limit?: number; cursor?: string; prefix: string } = {
-      prefix: 'client:'
+      prefix: 'client:',
     };
 
     if (options?.limit !== undefined) {
@@ -2445,7 +2328,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Return result with cursor if there are more results
     return {
       items: clients,
-      cursor: response.list_complete ? undefined : response.cursor
+      cursor: response.list_complete ? undefined : response.cursor,
     };
   }
 
@@ -2482,7 +2365,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
       ...client,
       ...updates,
       clientId: client.clientId, // Ensure clientId doesn't change
-      tokenEndpointAuthMethod: authMethod // Use determined auth method
+      tokenEndpointAuthMethod: authMethod, // Use determined auth method
     };
 
     // Only include client secret for confidential clients
@@ -2525,7 +2408,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
   async listUserGrants(userId: string, options?: ListOptions): Promise<ListResult<GrantSummary>> {
     // Prepare list options for KV
     const listOptions: { limit?: number; cursor?: string; prefix: string } = {
-      prefix: `grant:${userId}:`
+      prefix: `grant:${userId}:`,
     };
 
     if (options?.limit !== undefined) {
@@ -2551,7 +2434,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
           userId: grantData.userId,
           scope: grantData.scope,
           metadata: grantData.metadata,
-          createdAt: grantData.createdAt
+          createdAt: grantData.createdAt,
         };
         grantSummaries.push(summary);
       }
@@ -2562,7 +2445,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Return result with cursor if there are more results
     return {
       items: grantSummaries,
-      cursor: response.list_complete ? undefined : response.cursor
+      cursor: response.list_complete ? undefined : response.cursor,
     };
   }
 
@@ -2586,7 +2469,7 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Continue fetching and deleting tokens until we've processed all of them
     while (!allTokensDeleted) {
       const listOptions: { prefix: string; cursor?: string } = {
-        prefix: tokenPrefix
+        prefix: tokenPrefix,
       };
 
       if (cursor) {
@@ -2597,9 +2480,11 @@ class OAuthHelpersImpl implements OAuthHelpers {
 
       // Delete each token in this batch
       if (result.keys.length > 0) {
-        await Promise.all(result.keys.map((key: { name: string }) => {
-          return this.env.OAUTH_KV.delete(key.name);
-        }));
+        await Promise.all(
+          result.keys.map((key: { name: string }) => {
+            return this.env.OAUTH_KV.delete(key.name);
+          })
+        );
       }
 
       // Check if we need to fetch more tokens
