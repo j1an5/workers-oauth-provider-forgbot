@@ -4,7 +4,7 @@ This is a TypeScript library that implements the provider side of the OAuth 2.1 
 
 ## Beta
 
-As of March, 2025, this library is very new, prerelaese software. The API is still subject to change.
+As of March, 2025, this library is very new, prerelease software. The API is still subject to change.
 
 ## Benefits of this library
 
