@@ -2,9 +2,9 @@
 
 This is a TypeScript library that implements the provider side of the OAuth 2.1 protocol with PKCE support. The library is intended to be used on Cloudflare Workers.
 
-## EXPERIMENTAL
+## Beta
 
-As of March, 2025, this library is very new. Please use with caution as additional security reviews are still in progress.
+As of March, 2025, this library is very new, prerelease software. The API is still subject to change.
 
 ## Benefits of this library
 
