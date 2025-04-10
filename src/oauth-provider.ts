@@ -698,8 +698,10 @@ class OAuthProviderImpl {
     }
 
     this.options = {
+      accessTokenTTL: DEFAULT_ACCESS_TOKEN_TTL,
+      onError: ({ status, code, description }) =>
+        console.warn(`OAuth error response: ${status} ${code} - ${description}`),
       ...options,
-      accessTokenTTL: options.accessTokenTTL || DEFAULT_ACCESS_TOKEN_TTL,
     };
   }
 

@@ -270,17 +270,6 @@ By using the `onError` option, you can emit notifications or take other actions 
 new OAuthProvider({
   // ... other options ...
   onError({ code, description, status, headers }) {
-    console.error(`Error ${code}: ${description}`)
-  }
-})
-```
-
-Or sending events to an external system as required:
-
-```ts
-new OAuthProvider({
-  // ... other options ...
-  onError({ code, description, status, headers }) {
     Sentry.captureMessage(/* ... */)
   }
 })
@@ -299,6 +288,8 @@ new OAuthProvider({
   }
 })
 ```
+
+By default, the `onError` callback is set to ``({ status, code, description }) => console.warn(`OAuth error response: ${status} ${code} - ${description}`)``.
 
 ## Implementation Notes
 
