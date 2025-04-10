@@ -262,6 +262,35 @@ The `accessTokenTTL` override is particularly useful when the application is als
 
 The `props` values are end-to-end encrypted, so they can safely contain sensitive information.
 
+## Custom Error Responses
+
+By using the `onError` option, you can emit notifications or take other actions when an error response was to be emitted:
+
+```ts
+new OAuthProvider({
+  // ... other options ...
+  onError({ code, description, status, headers }) {
+    Sentry.captureMessage(/* ... */)
+  }
+})
+```
+
+By returning a `Response` you can also override what the OAuthProvider returns to your users:
+
+```ts
+new OAuthProvider({
+  // ... other options ...
+  onError({ code, description, status, headers }) {
+    if (code === 'unsupported_grant_type') {
+      return new Response('...', { status, headers })
+    }
+    // returning undefined (i.e. void) uses the default Response generation
+  }
+})
+```
+
+By default, the `onError` callback is set to ``({ status, code, description }) => console.warn(`OAuth error response: ${status} ${code} - ${description}`)``.
+
 ## Implementation Notes
 
 ### End-to-end encryption

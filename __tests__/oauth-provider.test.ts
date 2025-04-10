@@ -1856,6 +1856,108 @@ describe('OAuthProvider', () => {
     });
   });
 
+  describe('Error Handling with onError Callback', () => {
+    it('should use the default onError callback that logs a warning', async () => {
+      // Spy on console.warn to check default behavior
+      const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      // Create a request that will trigger an error
+      const invalidTokenRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: 'Bearer invalid-token',
+      });
+
+      const response = await oauthProvider.fetch(invalidTokenRequest, mockEnv, mockCtx);
+
+      // Verify the error response
+      expect(response.status).toBe(401);
+      const error = await response.json();
+      expect(error.error).toBe('invalid_token');
+
+      // Verify the default onError callback was triggered and logged a warning
+      expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining('OAuth error response: 401 invalid_token'));
+
+      // Restore the spy
+      consoleWarnSpy.mockRestore();
+    });
+
+    it('should allow custom onError callback to modify the error response', async () => {
+      // Create a provider with custom onError callback
+      const customErrorProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        scopesSupported: ['read', 'write'],
+        onError: ({ code, description, status }) => {
+          // Return a completely different response
+          return new Response(
+            JSON.stringify({
+              custom_error: true,
+              original_code: code,
+              custom_message: `Custom error handler: ${description}`,
+            }),
+            {
+              status,
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Custom-Error': 'true',
+              },
+            }
+          );
+        },
+      });
+
+      // Create a request that will trigger an error
+      const invalidTokenRequest = createMockRequest('https://example.com/api/test', 'GET', {
+        Authorization: 'Bearer invalid-token',
+      });
+
+      const response = await customErrorProvider.fetch(invalidTokenRequest, mockEnv, mockCtx);
+
+      // Verify the custom error response
+      expect(response.status).toBe(401); // Status should be preserved
+      expect(response.headers.get('X-Custom-Error')).toBe('true');
+
+      const error = await response.json();
+      expect(error.custom_error).toBe(true);
+      expect(error.original_code).toBe('invalid_token');
+      expect(error.custom_message).toContain('Custom error handler');
+    });
+
+    it('should use standard error response when onError returns void', async () => {
+      // Create a provider with a callback that performs a side effect but doesn't return a response
+      let callbackInvoked = false;
+      const sideEffectProvider = new OAuthProvider({
+        apiRoute: ['/api/'],
+        apiHandler: TestApiHandler,
+        defaultHandler: testDefaultHandler,
+        authorizeEndpoint: '/authorize',
+        tokenEndpoint: '/oauth/token',
+        scopesSupported: ['read', 'write'],
+        onError: () => {
+          callbackInvoked = true;
+          // No return - should use standard error response
+        },
+      });
+
+      // Create a request that will trigger an error
+      const invalidRequest = createMockRequest('https://example.com/oauth/token', 'POST', {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      });
+
+      const response = await sideEffectProvider.fetch(invalidRequest, mockEnv, mockCtx);
+
+      // Verify the standard error response
+      expect(response.status).toBe(401);
+      const error = await response.json();
+      expect(error.error).toBe('invalid_client');
+
+      // Verify callback was invoked
+      expect(callbackInvoked).toBe(true);
+    });
+  });
+
   describe('OAuthHelpers', () => {
     it('should allow listing and revoking grants', async () => {
       // Create a client
