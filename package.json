@@ -15,7 +15,9 @@
   },
   "scripts": {
     "build": "tsup",
+    "build:watch": "tsup --watch",
     "test": "vitest run",
+    "test:watch": "vitest",
     "prepublishOnly": "npm run build",
     "prettier": "prettier -w ."
   },
