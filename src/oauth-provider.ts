@@ -99,7 +99,7 @@ export interface OAuthProviderOptions {
    * URL(s) for API routes. Requests with URLs starting with any of these prefixes
    * will be treated as API requests and require a valid access token.
    * Can be a single route or an array of routes. Each route can be a full URL or just a path.
-   * 
+   *
    * Used with `apiHandler` for the single-handler configuration. This is incompatible with
    * the `apiHandlers` property. You must use either `apiRoute` + `apiHandler` OR `apiHandlers`, not both.
    */
@@ -109,7 +109,7 @@ export interface OAuthProviderOptions {
    * Handler for API requests that have a valid access token.
    * This handler will receive the authenticated user properties in ctx.props.
    * Can be either an ExportedHandler object with a fetch method or a class extending WorkerEntrypoint.
-   * 
+   *
    * Used with `apiRoute` for the single-handler configuration. This is incompatible with
    * the `apiHandlers` property. You must use either `apiRoute` + `apiHandler` OR `apiHandlers`, not both.
    */
@@ -120,12 +120,15 @@ export interface OAuthProviderOptions {
    * The keys are the API routes (strings only, not arrays), and the values are the handlers.
    * Each route can be a full URL or just a path, and each handler can be either an ExportedHandler
    * object with a fetch method or a class extending WorkerEntrypoint.
-   * 
+   *
    * This is incompatible with the `apiRoute` and `apiHandler` properties. You must use either
-   * `apiRoute` + `apiHandler` (single-handler configuration) OR `apiHandlers` (multi-handler 
+   * `apiRoute` + `apiHandler` (single-handler configuration) OR `apiHandlers` (multi-handler
    * configuration), not both.
    */
-  apiHandlers?: Record<string, ExportedHandlerWithFetch | (new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch)>;
+  apiHandlers?: Record<
+    string,
+    ExportedHandlerWithFetch | (new (ctx: ExecutionContext, env: any) => WorkerEntrypointWithFetch)
+  >;
 
   /**
    * Handler for all non-API requests or API requests without a valid token.
@@ -690,7 +693,7 @@ class OAuthProviderImpl {
    * Represents the validated type of a handler (ExportedHandler or WorkerEntrypoint)
    */
   private typedDefaultHandler: TypedHandler;
-  
+
   /**
    * Array of tuples of API routes and their validated handlers
    * In the simple case, this will be a single entry with the route and handler from options.apiRoute/apiHandler
@@ -705,25 +708,24 @@ class OAuthProviderImpl {
   constructor(options: OAuthProviderOptions) {
     // Initialize typedApiHandlers as an array
     this.typedApiHandlers = [];
-    
+
     // Check if we have incompatible configuration
     const hasSingleHandlerConfig = !!(options.apiRoute && options.apiHandler);
     const hasMultiHandlerConfig = !!options.apiHandlers;
-    
+
     if (hasSingleHandlerConfig && hasMultiHandlerConfig) {
       throw new TypeError(
         'Cannot use both apiRoute/apiHandler and apiHandlers. ' +
-        'Use either apiRoute + apiHandler OR apiHandlers, not both.'
+          'Use either apiRoute + apiHandler OR apiHandlers, not both.'
       );
     }
-    
+
     if (!hasSingleHandlerConfig && !hasMultiHandlerConfig) {
       throw new TypeError(
-        'Must provide either apiRoute + apiHandler OR apiHandlers. ' +
-        'No API route configuration provided.'
+        'Must provide either apiRoute + apiHandler OR apiHandlers. ' + 'No API route configuration provided.'
       );
     }
-    
+
     // Validate default handler
     this.typedDefaultHandler = this.validateHandler(options.defaultHandler, 'defaultHandler');
 
@@ -731,7 +733,7 @@ class OAuthProviderImpl {
     if (hasSingleHandlerConfig) {
       // Single handler mode with apiRoute + apiHandler
       const apiHandler = this.validateHandler(options.apiHandler!, 'apiHandler');
-      
+
       // For single handler mode, process the apiRoute(s) and map them all to the single apiHandler
       if (Array.isArray(options.apiRoute)) {
         options.apiRoute.forEach((route, index) => {
@@ -964,7 +966,7 @@ class OAuthProviderImpl {
     }
     return false;
   }
-  
+
   /**
    * Finds the appropriate API handler for a URL
    * @param url - The URL to find a handler for
@@ -1837,13 +1839,13 @@ class OAuthProviderImpl {
     // Find the appropriate API handler for this URL
     const url = new URL(request.url);
     const apiHandler = this.findApiHandlerForUrl(url);
-    
+
     if (!apiHandler) {
       // This shouldn't happen since we already checked with isApiRequest,
       // but handle it gracefully just in case
       return this.createErrorResponse('invalid_request', 'No handler found for API route', 404);
     }
-    
+
     // Call the API handler based on its type
     if (apiHandler.type === HandlerType.EXPORTED_HANDLER) {
       // It's an object with a fetch method
@@ -2190,6 +2192,20 @@ class OAuthHelpersImpl implements OAuthHelpers {
     // Check if implicit flow is requested but not allowed
     if (responseType === 'token' && !this.provider.options.allowImplicitFlow) {
       throw new Error('The implicit grant flow is not enabled for this provider');
+    }
+
+    // Validate the client ID and redirect URI
+    if (clientId) {
+      const clientInfo = await this.lookupClient(clientId);
+
+      // If client exists, validate the redirect URI against registered URIs
+      if (clientInfo && redirectUri) {
+        if (!clientInfo.redirectUris.includes(redirectUri)) {
+          throw new Error(
+            `Invalid redirect URI. The redirect URI provided does not match any registered URI for this client.`
+          );
+        }
+      }
     }
 
     return {
