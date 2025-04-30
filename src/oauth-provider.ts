@@ -1235,6 +1235,11 @@ class OAuthProviderImpl {
       return this.createErrorResponse('invalid_grant', 'Invalid redirect URI');
     }
 
+    // Reject if code_verifier is provided but PKCE wasn't used in authorization
+    if (!isPkceEnabled && codeVerifier) {
+      return this.createErrorResponse('invalid_request', 'code_verifier provided for a flow that did not use PKCE');
+    }
+
     // Verify PKCE code_verifier if code_challenge was provided during authorization
     if (isPkceEnabled) {
       if (!codeVerifier) {
