@@ -773,6 +773,44 @@ describe('OAuthProvider', () => {
       expect(error.error_description).toBe('redirect_uri is required when not using PKCE');
     });
 
+    it('should reject token exchange with code_verifier when PKCE was not used in authorization', async () => {
+      // First get an auth code WITHOUT using PKCE
+      const authRequest = createMockRequest(
+        `https://example.com/authorize?response_type=code&client_id=${clientId}` +
+          `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+          `&scope=read%20write&state=xyz123`
+      );
+
+      const authResponse = await oauthProvider.fetch(authRequest, mockEnv, mockCtx);
+      const location = authResponse.headers.get('Location')!;
+      const url = new URL(location);
+      const code = url.searchParams.get('code')!;
+
+      // Now exchange the code and incorrectly provide a code_verifier
+      const params = new URLSearchParams();
+      params.append('grant_type', 'authorization_code');
+      params.append('code', code);
+      params.append('redirect_uri', redirectUri);
+      params.append('client_id', clientId);
+      params.append('client_secret', clientSecret);
+      params.append('code_verifier', 'some_random_verifier_that_wasnt_used_in_auth');
+
+      const tokenRequest = createMockRequest(
+        'https://example.com/oauth/token',
+        'POST',
+        { 'Content-Type': 'application/x-www-form-urlencoded' },
+        params.toString()
+      );
+
+      const tokenResponse = await oauthProvider.fetch(tokenRequest, mockEnv, mockCtx);
+
+      // Should fail because code_verifier is provided but PKCE wasn't used in authorization
+      expect(tokenResponse.status).toBe(400);
+      const error = await tokenResponse.json();
+      expect(error.error).toBe('invalid_request');
+      expect(error.error_description).toBe('code_verifier provided for a flow that did not use PKCE');
+    });
+
     // Helper function for PKCE tests
     function generateRandomString(length: number): string {
       const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
