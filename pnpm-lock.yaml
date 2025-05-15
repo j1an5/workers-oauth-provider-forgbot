@@ -7,11 +7,10 @@ settings:
 importers:
 
   .:
-    dependencies:
+    devDependencies:
       '@cloudflare/workers-types':
         specifier: ^4.20250311.0
         version: 4.20250311.0
-    devDependencies:
       prettier:
         specifier: ^3.5.3
         version: 3.5.3
