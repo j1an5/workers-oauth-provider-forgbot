@@ -1,4 +1,3 @@
-import { ExportedHandler, ExecutionContext } from '@cloudflare/workers-types';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 
 // Types
