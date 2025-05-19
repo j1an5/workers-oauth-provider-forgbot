@@ -21,7 +21,6 @@ A Worker that uses the library might look like this:
 
 ```ts
 import { OAuthProvider } from "my-oauth";
-import type { ExportedHandler } from "@cloudflare/workers-types";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 // We export the OAuthProvider instance as the entrypoint to our Worker. This means it
