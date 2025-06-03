@@ -327,7 +327,7 @@ This library (including the schema documentation) was largely written with the h
 
 "haha gpus go brrr"
 
-In all seriousness, two months ago (January 2025), I ([@kentonv](https://github.com/kentonv)) would have agreed. I was an AI skeptic. I thoughts LLMs were glorified Markov chain generators that didn't actually understand code and couldn't produce anything novel. I started this project on a lark, fully expecting the AI to produce terrible code for me to laugh at. And then, uh... the code actually looked pretty good. Not perfect, but I just told the AI to fix things, and it did. I was shocked.
+In all seriousness, two months ago (January 2025), I ([@kentonv](https://github.com/kentonv)) would have agreed. I was an AI skeptic. I thought LLMs were glorified Markov chain generators that didn't actually understand code and couldn't produce anything novel. I started this project on a lark, fully expecting the AI to produce terrible code for me to laugh at. And then, uh... the code actually looked pretty good. Not perfect, but I just told the AI to fix things, and it did. I was shocked.
 
 To emphasize, **this is not "vibe coded"**. Every line was thoroughly reviewed and cross-referenced with relevant RFCs, by security experts with previous experience with those RFCs. I was *trying* to validate my skepticism. I ended up proving myself wrong.
 
