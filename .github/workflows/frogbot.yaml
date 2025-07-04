@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   frogbot-scan:
-    runs-on: ubuntu-latest
+    runs-on: releases-docker.jfrog.io/jfrog/jfrog-cli-full-v2-jf
     strategy:
       matrix:
         # The repository scanning will be triggered periodically on the following branches.
