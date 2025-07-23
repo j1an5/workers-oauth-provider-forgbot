@@ -17,19 +17,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Checkout 到用户输入的 tag
       - name: Checkout the selected tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag }}
+          # 直接拉取 tag 而非分支
+          ref: refs/tags/${{ github.event.inputs.tag }}
+          fetch-depth: 0
 
-      # 2. Debug：打印当前 Git ref，验证是否切到了 tag
       - name: Debug current Git ref
         run: |
           echo "🎯 Current ref:"
-          git branch --show-current || echo "(detached HEAD)"
+          git describe --tags --exact-match || git branch --show-current
 
-      # 3. 可选：安装 pnpm
       - name: Set up pnpm
         run: |
           export SHELL=/bin/bash
@@ -37,7 +36,6 @@ jobs:
           echo "PNPM_HOME=$HOME/.local/share/pnpm" >> $GITHUB_ENV
           echo "PATH=$HOME/.local/share/pnpm:$PATH" >> $GITHUB_ENV
 
-      # 4. 执行 Frogbot 扫描
       - name: Run Frogbot security scan on tag
         uses: jfrog/frogbot@v2
         env:
