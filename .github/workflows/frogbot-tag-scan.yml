@@ -20,9 +20,12 @@ jobs:
       - name: Checkout the selected tag
         uses: actions/checkout@v4
         with:
-          # 直接拉取 tag 而非分支
-          ref: refs/tags/${{ github.event.inputs.tag }}
+          # 指定要 checkout 的 ref
+          ref: ${{ github.event.inputs.tag }}
+          # 拉全量历史（包含所有 tags）
           fetch-depth: 0
+          # 一并 fetch tags
+          fetch-tags: true
 
       - name: Debug current Git ref
         run: |
