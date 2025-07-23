@@ -1,4 +1,4 @@
-name: "Frogbot Security Scan - Manual Tag Trigger"
+name: "Frogbot Security Scan – Manual Tag Trigger"
 
 on:
   workflow_dispatch:
@@ -15,20 +15,31 @@ permissions:
 jobs:
   scan-tag:
     runs-on: ubuntu-latest
+
     steps:
+      # 1. Checkout 到用户输入的 tag
       - name: Checkout the selected tag
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag }}
 
+      # 2. Debug：打印当前 Git ref，验证是否切到了 tag
+      - name: Debug current Git ref
+        run: |
+          echo "🎯 Current ref:"
+          git branch --show-current || echo "(detached HEAD)"
+
+      # 3. 可选：安装 pnpm
       - name: Set up pnpm
         run: |
           export SHELL=/bin/bash
           curl -fsSL https://get.pnpm.io/install.sh | sh -
-          echo "PNPM_HOME=/home/runner/.local/share/pnpm" >> $GITHUB_ENV
-          echo "PATH=/home/runner/.local/share/pnpm:$PATH" >> $GITHUB_ENV
+          echo "PNPM_HOME=$HOME/.local/share/pnpm" >> $GITHUB_ENV
+          echo "PATH=$HOME/.local/share/pnpm:$PATH" >> $GITHUB_ENV
 
-      - uses: jfrog/frogbot@v2
+      # 4. 执行 Frogbot 扫描
+      - name: Run Frogbot security scan on tag
+        uses: jfrog/frogbot@v2
         env:
           JF_URL: ${{ secrets.JF_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
