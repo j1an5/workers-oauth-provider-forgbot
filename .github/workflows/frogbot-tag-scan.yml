@@ -1,0 +1,36 @@
+name: "Frogbot Security Scan - Manual Tag Trigger"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The Git tag to scan (e.g., v0.0.3)"
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  security-events: write
+
+jobs:
+  scan-tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the selected tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - name: Set up pnpm
+        run: |
+          export SHELL=/bin/bash
+          curl -fsSL https://get.pnpm.io/install.sh | sh -
+          echo "PNPM_HOME=/home/runner/.local/share/pnpm" >> $GITHUB_ENV
+          echo "PATH=/home/runner/.local/share/pnpm:$PATH" >> $GITHUB_ENV
+
+      - uses: jfrog/frogbot@v2
+        env:
+          JF_URL: ${{ secrets.JF_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.JF_ACCESS_TOKEN }}
+          JF_GIT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JF_GIT_BASE_BRANCH: ${{ github.event.inputs.tag }}
